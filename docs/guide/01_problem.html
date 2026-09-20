@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>1. The Problem — Verdict Guide</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="layout">
+    <nav class="sidebar">
+      <h2>Verdict Guide</h2>
+      <a href="index.html">Home</a>
+      <a href="01_problem.html" class="active">1. Problem</a>
+      <a href="02_data.html">2. Data</a>
+      <a href="03_streaming_db.html">3. Streaming &amp; DB</a>
+      <a href="04_windows_sampling.html">4. Windows</a>
+      <a href="05_algorithms.html">5. Algorithms</a>
+      <a href="06_evidence_tracing.html">6. Evidence &amp; Tracing</a>
+      <a href="07_product.html">7. Product</a>
+    </nav>
+    <main class="main">
+      <h1>Chapter 1: The Problem Verdict Solves</h1>
+      <p class="subtitle">Why "find the segment that moved the most" is not good enough.</p>
+
+      <span class="badge simple">Simple first</span>
+
+      <h2>The business story</h2>
+      <p>
+        Imagine you run a mobile ad network like InMobi. Millions of ad requests flow every hour.
+        For each request you track: did we fill it? Did the user see an ad? Did they click? How much revenue did we earn?
+      </p>
+      <p>
+        Operations teams watch metrics like <strong>fill rate</strong> (what fraction of requests got an ad),
+        <strong>CTR</strong> (click rate), and <strong>eCPM</strong> (revenue per thousand impressions).
+        When one of these drops suddenly, someone needs to answer: <em>which slice of traffic broke, and why?</em>
+      </p>
+      <p>
+        That is the <strong>Automated Root Cause Analyst</strong> problem from the ClickHouse Click a thon 2026.
+        Verdict is the solution built for that track.
+      </p>
+
+      <div class="callout simple">
+        <strong>Analogy:</strong> Your city's average temperature dropped 5°C. The naive fix is to find
+        which neighborhood cooled the most and blame it. But maybe one big factory shut down in Industrial District,
+        and every neighborhood that has factory workers also looks cold. Those neighborhoods are <em>passengers</em>,
+        not the cause.
+      </div>
+
+      <h2>The obvious approach (and why it fails)</h2>
+      <p>The obvious approach:</p>
+      <ol>
+        <li>Break traffic into segments (region, OS version, device model, etc.)</li>
+        <li>Rank segments by how much each metric moved</li>
+        <li>Report the worst one</li>
+      </ol>
+      <p>This fails in three ways that actually appear in the hackathon data.</p>
+
+      <h3>Failure 1: Passengers look like drivers</h3>
+      <p>
+        <strong>Real incident:</strong> Android 15 fill rate collapses.
+      </p>
+      <p>
+        Every phone model that mostly runs Android 15 also shows a big drop. Galaxy S23 looks guilty.
+        But Galaxy S23 did not break. Android 15 broke, and Galaxy S23 is just along for the ride.
+      </p>
+      <p>
+        Ranking cannot tell them apart. Both look identical from the top.
+      </p>
+
+      <h3>Failure 2: Interactions hide in plain sight</h3>
+      <p>
+        Some incidents only exist at the <strong>intersection</strong> of two dimensions.
+      </p>
+      <p>
+        Example shape: only <code>APAC × iOS 18.1</code> is wrong. Look at APAC alone: mildly off.
+        Look at iOS 18.1 alone: mildly off. Neither crosses a threshold. The real problem is invisible
+        to any one dimensional scan.
+      </p>
+
+      <h3>Failure 3: Compensating pairs cancel out</h3>
+      <p>
+        One ad format's eCPM falls 30%. Another rises 25%. The <strong>total</strong> eCPM barely moves.
+        A detector watching only the aggregate sees a healthy system.
+      </p>
+      <p>
+        Measured on this corpus: total eCPM moved only 0.11% while the two legs moved −30% and +25%.
+      </p>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 500 180" width="500" height="180" xmlns="http://www.w3.org/2000/svg">
+          <text x="250" y="25" text-anchor="middle" fill="#9aa8bc" font-size="12">Compensating pair: aggregate looks fine</text>
+          <rect x="40" y="50" width="120" height="60" rx="6" fill="#ff6b6b33" stroke="#ff6b6b"/>
+          <text x="100" y="75" text-anchor="middle" fill="#e8edf4" font-size="11">Banner eCPM</text>
+          <text x="100" y="95" text-anchor="middle" fill="#ff6b6b" font-size="14" font-weight="bold">−30%</text>
+          <rect x="190" y="50" width="120" height="60" rx="6" fill="#3dd68c33" stroke="#3dd68c"/>
+          <text x="250" y="75" text-anchor="middle" fill="#e8edf4" font-size="11">Video eCPM</text>
+          <text x="250" y="95" text-anchor="middle" fill="#3dd68c" font-size="14" font-weight="bold">+25%</text>
+          <text x="370" y="70" fill="#9aa8bc" font-size="20">=</text>
+          <rect x="390" y="50" width="100" height="60" rx="6" fill="#243044" stroke="#9aa8bc"/>
+          <text x="440" y="75" text-anchor="middle" fill="#e8edf4" font-size="11">Total eCPM</text>
+          <text x="440" y="95" text-anchor="middle" fill="#9aa8bc" font-size="14">~0%</text>
+          <text x="250" y="150" text-anchor="middle" fill="#9aa8bc" font-size="11">Structural detector sees both legs; temporal on total sees nothing</text>
+        </svg>
+        <figcaption>Two segments move in opposite directions. The total hides the story.</figcaption>
+      </figure>
+
+      <span class="badge tech">Going deeper</span>
+
+      <h2>What Verdict does differently</h2>
+      <p>Verdict replaces ranking with <strong>proof</strong> and publishes what it cleared.</p>
+
+      <table>
+        <tr><th>Naive approach</th><th>Verdict approach</th></tr>
+        <tr><td>Rank by movement size</td><td><strong>Explain away test:</strong> remove candidate, does parent return to normal?</td></tr>
+        <tr><td>One detector on totals</td><td><strong>Two detectors:</strong> temporal (vs history) + structural (vs siblings)</td></tr>
+        <tr><td>Silent about what was skipped</td><td><strong>Coverage ledger:</strong> every untested cell with a reason</td></tr>
+        <tr><td>LLM decides the answer</td><td><strong>Stats decide;</strong> LLM only writes prose from fixed numbers</td></tr>
+      </table>
+
+      <h2>The five stage pipeline</h2>
+      <p>When you run <code>verdict investigate --start 2026-07-05 --hours 24</code>:</p>
+      <ol class="step_list">
+        <li><strong>Detect</strong> — scan the lattice. Did any segment move vs its baseline or vs its siblings?</li>
+        <li><strong>Correct</strong> — apply Benjamini Hochberg so thousands of tests do not flood false alarms.</li>
+        <li><strong>Localize</strong> — for each incident, run counterfactuals: sufficiency, minimality, maximality, holdout.</li>
+        <li><strong>Score</strong> — compute confidence from five weighted components.</li>
+        <li><strong>Narrate &amp; publish</strong> — LLM writes summary (optional), everything goes to ClickHouse + trace.</li>
+      </ol>
+
+      <h2>What a good answer looks like</h2>
+      <p>A strong Verdict case says:</p>
+      <ul>
+        <li><strong>What moved:</strong> fill rate fell 3.4% globally</li>
+        <li><strong>Who is accused:</strong> <code>os_version = Android 15</code></li>
+        <li><strong>Why we believe it:</strong> removing Android 15 restores global fill rate (sufficiency passed)</li>
+        <li><strong>Why alternatives were cleared:</strong> Galaxy S23 failed sufficiency (passenger)</li>
+        <li><strong>Confidence breakdown:</strong> each component with its weight and score</li>
+        <li><strong>Full trace:</strong> every step, SQL query, and timing</li>
+      </ul>
+
+      <h2>Rate vs traffic mix (another trap)</h2>
+      <p>
+        Fill rate can fall for two completely different reasons:
+      </p>
+      <ul>
+        <li><strong>Rate problem:</strong> a segment started failing to fill (real incident)</li>
+        <li><strong>Mix problem:</strong> more traffic went to a segment that was always worse at filling (not a bug)</li>
+      </ul>
+      <p>
+        Verdict decomposes the movement into <strong>rate</strong>, <strong>mix</strong>, and <strong>interaction</strong> terms
+        so a demand shift is not reported as an outage. On the Android 15 incident, essentially all of the −3.4% move
+        is within segment rate, not mix. That supports "real outage" rather than "traffic shifted."
+      </p>
+
+      <h2>Known honest miss: iOS 17.5</h2>
+      <p>
+        On the unseen release bundle (July 6 to 10), the true cause of fill rate collapse was
+        <code>os_version = iOS 17.5</code> (40% relative drop, easy to verify in SQL).
+        Verdict reported <code>publisher_tier = tier_3</code> instead for fill rate.
+      </p>
+      <p>
+        Why: dimension attributes were regenerated across the boundary. Historical baselines for segment level
+        rates became meaningless even though volume baselines stayed fine. This is documented as a known weakness,
+        not hidden. See Chapter 5 and 7 for details.
+      </p>
+
+      <div class="nav_footer">
+        <a href="index.html">← Home</a>
+        <a href="02_data.html">Chapter 2: Data →</a>
+      </div>
+    </main>
+  </div>
+</body>
+</html>

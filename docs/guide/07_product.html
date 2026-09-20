@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>7. The Product — Verdict Guide</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="layout">
+    <nav class="sidebar">
+      <h2>Verdict Guide</h2>
+      <a href="index.html">Home</a>
+      <a href="01_problem.html">1. Problem</a>
+      <a href="02_data.html">2. Data</a>
+      <a href="03_streaming_db.html">3. Streaming &amp; DB</a>
+      <a href="04_windows_sampling.html">4. Windows</a>
+      <a href="05_algorithms.html">5. Algorithms</a>
+      <a href="06_evidence_tracing.html">6. Evidence &amp; Tracing</a>
+      <a href="07_product.html" class="active">7. Product</a>
+    </nav>
+    <main class="main">
+      <h1>Chapter 7: The Product</h1>
+      <p class="subtitle">Web console, running the stack, Verdict.AI, and end to end walkthrough.</p>
+
+      <span class="badge simple">Simple first</span>
+
+      <h2>What you get when the stack is up</h2>
+      <table>
+        <tr><th>Surface</th><th>URL</th><th>Purpose</th></tr>
+        <tr><td><strong>Console</strong></td><td><code>http://localhost:3000</code></td><td>Cases, evidence, traces, ingest</td></tr>
+        <tr><td><strong>Verdict.AI</strong></td><td>Chat bubble on console</td><td>Ask questions, SQL tool hits same tables</td></tr>
+        <tr><td><strong>LibreChat</strong></td><td><code>http://localhost:3080</code></td><td>Full window chat (same agent)</td></tr>
+        <tr><td><strong>MCP server</strong></td><td><code>http://localhost:8001/sse</code></td><td>ClickHouse SQL for any MCP client</td></tr>
+        <tr><td><strong>HyperDX</strong></td><td>Hosted (ClickHouse Cloud)</td><td>Distributed trace viewer</td></tr>
+      </table>
+
+      <h2>Starting the stack</h2>
+      <pre><code>cd click-a-thon-inmobi-solution-verdict
+cp .env.example .env    # CLICKHOUSE_HOST, CLICKHOUSE_PASSWORD, etc.
+./stack.sh up
+
+docker compose exec verdict verdict schema apply
+docker compose exec verdict verdict load
+docker compose exec verdict verdict investigate --start 2026-07-05 --hours 24</code></pre>
+
+      <p>Optional AI recommendations (off by default even when enabled):</p>
+      <pre><code>./stack.sh up --with-ai   # needs CURSOR_API_KEY</code></pre>
+
+      <h2>The console: four tabs per case</h2>
+
+      <h3>1. Board (home)</h3>
+      <p>
+        Lists cases from the latest run, ranked by priority (impact × confidence).
+        Header shows: open cases, revenue at risk, mean confidence, cells untested.
+        The "untested" count is intentional honesty about coverage.
+      </p>
+
+      <h3>2. Trace</h3>
+      <p>Two views of the same investigation steps:</p>
+      <ul>
+        <li><strong>Tree</strong> — hierarchical steps with what/why/result</li>
+        <li><strong>Waterfall</strong> — timing bars using real <code>offset_ms</code> gaps</li>
+      </ul>
+      <p>
+        Example insight from a trace: <code>audit</code> runs before <code>detect</code>.
+        On the unseen release, audit rejected segment baselines and forced sibling comparison.
+      </p>
+      <p>HyperDX link in case header opens the same trace in the observability UI.</p>
+
+      <h3>3. Evidence</h3>
+      <ul>
+        <li>Confidence breakdown: each component, weight, score, explanation</li>
+        <li>Full candidate table: accused + every cleared segment with rejection reason</li>
+        <li>Rate/mix decomposition when applicable</li>
+      </ul>
+
+      <h3>4. Narrative</h3>
+      <p>
+        Human readable summary. Numbers come from the computed bundle, not invented by the model.
+        Badge shows whether LLM prose was verified or fell back to template.
+      </p>
+
+      <h3>5. Actions (optional)</h3>
+      <p>
+        Cursor CLI agent drafts remediation steps, then a second pass reviews them against evidence.
+        Two gates: stack must be started with <code>--with-ai</code>, and user toggle must be on.
+        Always labeled advisory. Pipeline verdicts do not depend on this.
+      </p>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 520 220" width="520" height="220" xmlns="http://www.w3.org/2000/svg">
+          <rect x="10" y="10" width="500" height="200" rx="10" fill="#1a2332" stroke="#2d3a4f"/>
+          <text x="260" y="35" text-anchor="middle" fill="#4da3ff" font-weight="bold">Case Panel Layout</text>
+          <rect x="30" y="50" width="460" height="35" rx="4" fill="#243044" stroke="#4da3ff"/>
+          <text x="260" y="72" text-anchor="middle" fill="#e8edf4" font-size="11">Header: metric, segment, confidence, HyperDX link</text>
+          <rect x="30" y="95" width="110" height="95" rx="4" fill="#243044" stroke="#7c5cff"/>
+          <text x="85" y="145" text-anchor="middle" fill="#9aa8bc" font-size="10">Trace</text>
+          <rect x="150" y="95" width="110" height="95" rx="4" fill="#243044" stroke="#7c5cff"/>
+          <text x="205" y="145" text-anchor="middle" fill="#9aa8bc" font-size="10">Evidence</text>
+          <rect x="270" y="95" width="110" height="95" rx="4" fill="#243044" stroke="#7c5cff"/>
+          <text x="325" y="145" text-anchor="middle" fill="#9aa8bc" font-size="10">Narrative</text>
+          <rect x="390" y="95" width="100" height="95" rx="4" fill="#243044" stroke="#9aa8bc" stroke-dasharray="4"/>
+          <text x="440" y="145" text-anchor="middle" fill="#9aa8bc" font-size="10">Actions</text>
+          <text x="440" y="160" text-anchor="middle" fill="#9aa8bc" font-size="8">optional</text>
+        </svg>
+        <figcaption>Console case drill down structure.</figcaption>
+      </figure>
+
+      <span class="badge tech">Verdict.AI and MCP</span>
+
+      <h2>Verdict.AI (chat)</h2>
+      <p>
+        Chat bubble backed by LibreChat with <strong>one tool</strong>: SQL against the same ClickHouse tables
+        the detectors read. The agent is told the schema up front:
+      </p>
+      <ul>
+        <li>Rollups store counters, never pre computed rates</li>
+        <li><code>combo</code> / <code>key_a</code> / <code>key_b</code> keying</li>
+        <li>Pipeline output tables and coverage ledger exist</li>
+        <li>A segment missing from cases was not necessarily innocent</li>
+      </ul>
+      <p>It must show SQL so answers can be verified.</p>
+
+      <h2>MCP for Cursor / other clients</h2>
+      <pre><code>{ "mcpServers": { "verdict-clickhouse": { "url": "http://localhost:8001/sse" } } }</code></pre>
+      <p>Official ClickHouse MCP server with schema aware prompts.</p>
+
+      <h2>Ingest from the console</h2>
+      <p>
+        The <code>IngestPanel</code> component can trigger loading new data without CLI.
+        Same verification rules apply: rollups must reconcile with raw.
+      </p>
+
+      <h2>CLI reference</h2>
+      <table>
+        <tr><th>Command</th><th>What it does</th></tr>
+        <tr><td><code>verdict schema apply</code></td><td>Create ClickHouse tables, views, dictionaries</td></tr>
+        <tr><td><code>verdict load</code></td><td>Load parquet + CSVs, verify rollups</td></tr>
+        <tr><td><code>verdict investigate</code></td><td>Run full pipeline, write cases</td></tr>
+        <tr><td><code>verdict config check</code></td><td>Validate YAML, no network</td></tr>
+        <tr><td><code>verdict config matrix</code></td><td>Show legal metric × dimension slices</td></tr>
+        <tr><td><code>verdict inject</code></td><td>Plant synthetic incidents + answer key</td></tr>
+      </table>
+
+      <h3>Investigate flags</h3>
+      <ul>
+        <li><code>--no-llm</code> — template narrative only</li>
+        <li><code>--no-persist</code> — dry run, no DB writes (~1.9s for 24h)</li>
+        <li><code>--grain 5m|1h|1d</code></li>
+        <li><code>--metric fill_rate</code> (repeatable)</li>
+      </ul>
+
+      <h2>End to end demo story</h2>
+      <ol class="step_list">
+        <li>Load 9M event build corpus (+ optional unseen 1.5M bundle)</li>
+        <li>Run investigate on a quiet day → few or no cases (clean window test)</li>
+        <li>Run on July 8 to 9 → fill rate collapse visible in board</li>
+        <li>Open case → trace shows audit → detect → localize path</li>
+        <li>Evidence tab → see tier_3 accused for fill rate, iOS 17.5 in other metrics</li>
+        <li>Ask Verdict.AI: "show me fill rate by os_version for July 8" → runs SQL, shows 0.48 for iOS 17.5</li>
+        <li>Follow HyperDX link → see full span waterfall for the run</li>
+      </ol>
+
+      <h2>Code map (where to read next)</h2>
+      <table>
+        <tr><th>Module</th><th>File</th><th>Role</th></tr>
+        <tr><td>Pipeline</td><td><code>src/verdict/pipeline.py</code></td><td>Orchestrates all stages</td></tr>
+        <tr><td>Temporal detect</td><td><code>src/verdict/detect.py</code></td><td>History based detector</td></tr>
+        <tr><td>Structural detect</td><td><code>src/verdict/structural.py</code></td><td>Sibling based detector</td></tr>
+        <tr><td>Localize</td><td><code>src/verdict/localize.py</code></td><td>Counterfactual tests</td></tr>
+        <tr><td>Stats</td><td><code>src/verdict/stats.py</code></td><td>All hypothesis tests</td></tr>
+        <tr><td>Schema/Load</td><td><code>schema.py</code>, <code>load.py</code></td><td>DDL and ingest</td></tr>
+        <tr><td>Store</td><td><code>store.py</code></td><td>Persist cases to ClickHouse</td></tr>
+        <tr><td>Trace</td><td><code>trace.py</code></td><td>OTLP spans + step records</td></tr>
+        <tr><td>Console</td><td><code>web/</code></td><td>Next.js UI</td></tr>
+      </table>
+
+      <h2>Further resources in the repo</h2>
+      <ul>
+        <li><code>README.md</code> — authoritative technical reference</li>
+        <li><code>demo.mp4</code> — 2m54s end to end on unseen release</li>
+        <li><code>demo_1.mp4</code> — 3m30s architecture walkthrough</li>
+        <li><code>pitch-deck.pdf</code> — presentation slides</li>
+        <li><code>artifacts/screenshots/</code> — console stills</li>
+        <li><code>artifacts/architecture/verdict-system-architecture.svg</code> — system diagram</li>
+      </ul>
+
+      <div class="card success">
+        <strong>You made it!</strong> You now have the full story: ad events → rollups → dual detectors →
+        counterfactual proof → published evidence → console and traces. Re-read any chapter from the sidebar.
+      </div>
+
+      <div class="nav_footer">
+        <a href="06_evidence_tracing.html">← Chapter 6</a>
+        <a href="index.html">Back to Home</a>
+      </div>
+    </main>
+  </div>
+</body>
+</html>

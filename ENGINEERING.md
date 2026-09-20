@@ -39,24 +39,22 @@ detectors rather than one, and a published ledger of what it cleared rather than
 You need a ClickHouse Cloud service and the hackathon dataset.
 
 ```bash
-git clone https://github.com/SohhamSeal/click-a-thon-inmobi-solution-verdict
-cd click-a-thon-inmobi-solution-verdict
+git clone https://github.com/satya2908/clickathon_in_mobi_solution
+cd clickathon_in_mobi_solution
 cp .env.example .env        # fill in CLICKHOUSE_HOST / CLICKHOUSE_PASSWORD
-./start.sh                  # console :3100, LibreChat :3081, MCP :8101
 ```
 
-`./start.sh` is the one command that brings the Docker stack up from this checkout.
-`./start.sh down` stops it. Ports can be changed: `./start.sh --web-port 3200 --mcp-port 8201`.
-
-First-time data (only if this ClickHouse service is empty):
+### With Docker
 
 ```bash
+./stack.sh up                                 # product: console, chat, tracing, MCP
 docker compose exec verdict verdict schema apply
 docker compose exec verdict verdict load
 docker compose exec verdict verdict investigate --start 2026-07-05 --hours 24
 ```
 
-`./stack.sh` is still there for the interactive menu, logs, rebuild, and `--with-ai`.
+Then open the console. Run `./stack.sh` with no arguments for the interactive menu; `down`,
+`status`, `logs [SERVICE]`, and `rebuild` are also available as non-interactive commands.
 
 Cursor-generated next actions are an optional capability, not a product dependency. Add
 `CURSOR_API_KEY` to `.env`, then start both stacks with one command:
@@ -676,14 +674,10 @@ artifacts/                  the architecture diagram, demo logs, unseen-bundle e
 day, the release pointed at the system from the console, the drill-down, the diagnosis,
 the trace, and a follow-up in chat.
 
-[`demo_1.mp4`](demo_1.mp4) — 3m30s, a walkthrough of the architecture: how a release
-becomes counter rollups, what the detectors and the cross-examination actually do, and
-where the model is and is not allowed to speak.
-
 [`pitch-deck.pdf`](pitch-deck.pdf). The slides are the artefact; the generator that
 produced them has been removed, so edits go through whichever tool you prefer.
 
-All three files are kept byte-identical with the copies in the submission folder.
+Both files are kept byte-identical with the copies in the submission folder.
 
 ### Screenshots
 

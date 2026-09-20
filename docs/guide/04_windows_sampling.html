@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>4. Windows &amp; Sampling — Verdict Guide</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="layout">
+    <nav class="sidebar">
+      <h2>Verdict Guide</h2>
+      <a href="index.html">Home</a>
+      <a href="01_problem.html">1. Problem</a>
+      <a href="02_data.html">2. Data</a>
+      <a href="03_streaming_db.html">3. Streaming &amp; DB</a>
+      <a href="04_windows_sampling.html" class="active">4. Windows</a>
+      <a href="05_algorithms.html">5. Algorithms</a>
+      <a href="06_evidence_tracing.html">6. Evidence &amp; Tracing</a>
+      <a href="07_product.html">7. Product</a>
+    </nav>
+    <main class="main">
+      <h1>Chapter 4: Windows and Sampling</h1>
+      <p class="subtitle">What time range we look at, what history we compare to, and what we skip.</p>
+
+      <span class="badge simple">Simple first</span>
+
+      <h2>The investigation window</h2>
+      <p>When you run:</p>
+      <pre><code>verdict investigate --start 2026-07-05 --hours 24 --grain 1h</code></pre>
+      <p>You are asking: <strong>"What happened between July 5 and July 6, measured at hourly buckets?"</strong></p>
+
+      <table>
+        <tr><th>Parameter</th><th>Default / options</th><th>Meaning</th></tr>
+        <tr><td><code>--start</code></td><td>required</td><td>Window start timestamp</td></tr>
+        <tr><td><code>--hours</code></td><td>24</td><td>How long the incident window is</td></tr>
+        <tr><td><code>--grain</code></td><td>from config: 5m, 1h, 1d</td><td>Which rollup table to read</td></tr>
+        <tr><td><code>--metric</code></td><td>all 10</td><td>Restrict to specific metrics</td></tr>
+      </table>
+
+      <h2>What is the baseline?</h2>
+      <p>
+        For the <strong>temporal detector</strong>, each segment is compared to its own recent past.
+        Default: <strong>4 prior weeks</strong> of history at the same weekday alignment (<code>baseline_weeks: 4</code>).
+      </p>
+
+      <div class="callout simple">
+        <strong>Example:</strong> Investigating Monday July 7 hourly buckets?
+        Baseline might be the same hours on the four previous Mondays (roughly), pooled together.
+        Expected fill rate = total fills in baseline weeks ÷ total requests in baseline weeks.
+        <em>Not</em> the average of four separate Monday rates unless traffic was equal each week.
+      </div>
+
+      <h3>Trimming one bad week</h3>
+      <p>
+        With only 4 samples, a robust baseline drops the single most extreme week (by rate), then pools the rest.
+        This survives one contaminated Sunday without needing a fancy median of rates.
+      </p>
+
+      <h2>What gets tested vs skipped</h2>
+      <p>Not every lattice cell gets a hypothesis test. A cell is tested only if it has enough traffic to detect the effect size we care about.</p>
+
+      <h3>Per metric power floor</h3>
+      <p>
+        There is <strong>no single global volume threshold</strong>. Fill rate near 79% and CTR near 1%
+        need wildly different sample sizes to detect a 5% relative move at 80% power.
+      </p>
+      <p>
+        For each cell, Verdict computes the <strong>smallest relative drop</strong> that cell's traffic could resolve.
+        If even a near total collapse (95% drop) would be undetectable, the cell goes to the <strong>coverage ledger</strong>
+        with reason <code>below_detection_floor</code>.
+      </p>
+
+      <div class="formula">
+        required_denominator ≈ φ × [z<sub>α</sub>√(2p̄(1−p̄)) + z<sub>power</sub>√(p₁(1−p₁)+p₂(1−p₂))]² / (p₁−p₂)²
+      </div>
+      <p class="callout technical">
+        In plain words: given baseline rate p₁, effect size, significance α=0.01, power 80%, and overdispersion φ,
+        how many trials (requests/impressions) do we need? φ &gt; 1 because ad traffic is "burstier" than pure coin flips.
+      </p>
+
+      <h2>Overdispersion (φ)</h2>
+      <p>
+        Real ad segments are more variable than binomial/Poisson models assume. Verdict estimates φ from baseline residuals
+        using a <strong>robust median</strong> (not mean, which one bad week can blow up). φ is clamped between 1.0 and 50.0.
+      </p>
+
+      <h2>Multiple testing and the window of hypotheses</h2>
+      <p>Per metric per bucket, the scan tests roughly:</p>
+      <ul>
+        <li>46 combos × number of distinct segment values per combo</li>
+        <li>Across 10 metrics in a full run</li>
+        <li>Example: 14,683 cells tested in one 24h run on the build corpus</li>
+      </ul>
+      <p>
+        At α=0.01 uncorrected, you'd expect ~147 false positives by chance alone.
+        Benjamini Hochberg FDR correction runs on the <strong>temporal</strong> family after all metrics are scanned.
+      </p>
+
+      <h2>Holdout window (localization)</h2>
+      <p>
+        After detection, localization can split the incident window in half and ask:
+        <strong>does the effect show up in both halves?</strong>
+      </p>
+      <p>
+        If an effect only appears in one half, it may be a spike, not a sustained incident.
+        Limitation: both halves are still compared to the same baseline, so holdout validates selection more than baseline quality.
+      </p>
+
+      <h2>Baseline audit</h2>
+      <p>
+        Before trusting segment history, Verdict can run an <code>audit</code> step: does the baseline still describe
+        this population? If not (as in the unseen dimension relabeling), temporal detection on segments is disabled.
+        The platform total (<code>__all__</code>) may still use history; structural detection uses siblings instead.
+      </p>
+
+      <h2>Real numbers from a 24h run (build corpus)</h2>
+      <table>
+        <tr><th>Stat</th><th>Value</th></tr>
+        <tr><td>Cells tested</td><td>14,683</td></tr>
+        <tr><td>Findings after BH correction</td><td>159</td></tr>
+        <tr><td>Cases opened</td><td>7 (1 localized, 6 unlocalized)</td></tr>
+        <tr><td>Candidates evaluated</td><td>287</td></tr>
+        <tr><td>Coverage gaps recorded</td><td>3,421</td></tr>
+      </table>
+      <p>
+        The coverage ledger is intentionally much larger than the case list. Silence about a segment and
+        proof it was innocent are different claims.
+      </p>
+
+      <h2>Grain choice tradeoff</h2>
+      <table>
+        <tr><th>Grain</th><th>Pros</th><th>Cons</th></tr>
+        <tr><td>5m</td><td>Fast alerting on totals</td><td>No 2 way cells; very thin segments</td></tr>
+        <tr><td>1h</td><td>Good balance for investigation</td><td>May miss sub hour spikes</td></tr>
+        <tr><td>1d</td><td>Most power per cell</td><td>Slow to see intraday incidents</td></tr>
+      </table>
+
+      <div class="nav_footer">
+        <a href="03_streaming_db.html">← Chapter 3</a>
+        <a href="05_algorithms.html">Chapter 5: Algorithms →</a>
+      </div>
+    </main>
+  </div>
+</body>
+</html>

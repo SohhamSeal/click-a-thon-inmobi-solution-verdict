@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>5. Algorithms — Verdict Guide</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="layout">
+    <nav class="sidebar">
+      <h2>Verdict Guide</h2>
+      <a href="index.html">Home</a>
+      <a href="01_problem.html">1. Problem</a>
+      <a href="02_data.html">2. Data</a>
+      <a href="03_streaming_db.html">3. Streaming &amp; DB</a>
+      <a href="04_windows_sampling.html">4. Windows</a>
+      <a href="05_algorithms.html" class="active">5. Algorithms</a>
+      <a href="06_evidence_tracing.html">6. Evidence &amp; Tracing</a>
+      <a href="07_product.html">7. Product</a>
+    </nav>
+    <main class="main">
+      <h1>Chapter 5: The Algorithms</h1>
+      <p class="subtitle">Detectors, statistical tests, correction, localization, and confidence. With formulae and alternatives.</p>
+
+      <span class="badge simple">Simple first</span>
+
+      <h2>Two detectors, one job</h2>
+      <p>Verdict asks two different questions about each lattice cell:</p>
+
+      <table>
+        <tr><th>Detector</th><th>Question</th><th>Needs history?</th><th>Catches</th></tr>
+        <tr><td><strong>Temporal</strong></td><td>Did this segment change vs its own past?</td><td>Yes (4 weeks)</td><td>Main effects (Android 15 outage)</td></tr>
+        <tr><td><strong>Structural</strong></td><td>Is this cell weird vs its row and column siblings?</td><td>No</td><td>Interactions, compensating pairs</td></tr>
+      </table>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 560 200" width="560" height="200" xmlns="http://www.w3.org/2000/svg">
+          <rect x="20" y="30" width="240" height="140" rx="8" fill="#243044" stroke="#4da3ff"/>
+          <text x="140" y="58" text-anchor="middle" fill="#4da3ff" font-weight="bold">Temporal</text>
+          <text x="140" y="80" text-anchor="middle" fill="#9aa8bc" font-size="11">Cell today vs same cell</text>
+          <text x="140" y="96" text-anchor="middle" fill="#9aa8bc" font-size="11">over prior 4 weeks</text>
+          <text x="140" y="130" text-anchor="middle" fill="#e8edf4" font-size="11">+ BH correction</text>
+          <rect x="300" y="30" width="240" height="140" rx="8" fill="#243044" stroke="#7c5cff"/>
+          <text x="420" y="58" text-anchor="middle" fill="#7c5cff" font-weight="bold">Structural</text>
+          <text x="420" y="80" text-anchor="middle" fill="#9aa8bc" font-size="11">Residual from additive fit</text>
+          <text x="420" y="96" text-anchor="middle" fill="#9aa8bc" font-size="11">on log values in one window</text>
+          <text x="420" y="130" text-anchor="middle" fill="#e8edf4" font-size="11">+ fixed z threshold (5.0)</text>
+        </svg>
+        <figcaption>Complementary detectors: they fail in opposite directions, which is why both exist.</figcaption>
+      </figure>
+
+      <h2>Stats primer (minimal)</h2>
+
+      <h3>p value</h3>
+      <p>
+        If nothing was really wrong, how often would we see a move this big (or bigger) by luck?
+        <strong>Small p</strong> = surprising under "nothing changed." Default threshold after correction: 0.01.
+      </p>
+
+      <h3>z score</h3>
+      <p>How many "typical noise units" away is the observation from expectation?</p>
+      <div class="formula">z = (observed − expected) / standard_error</div>
+
+      <h3>relative effect</h3>
+      <div class="formula">relative_effect = observed / expected − 1</div>
+      <p>Example: fill rate 0.68 vs baseline 0.75 → relative effect = −9.3%</p>
+
+      <span class="badge tech">Temporal detector</span>
+
+      <h2>Temporal: tests by metric type</h2>
+
+      <h3>1. Proportion metrics (fill_rate, ctr, render_rate)</h3>
+      <p><strong>Two proportion z test</strong> with overdispersion φ inflating variance.</p>
+      <div class="formula">
+        z = (p<sub>obs</sub> − p<sub>base</sub>) / √(φ · p̄(1−p̄) · (1/n<sub>obs</sub> + 1/n<sub>base</sub>))
+      </div>
+      <p><strong>Why not plain binomial?</strong> Ad segments are overdispersed. Binomial would flag everything as significant.</p>
+      <p><strong>Alternatives considered:</strong> Fisher's exact (too slow at scale), beta binomial (more complex, similar spirit).</p>
+
+      <h3>2. Count metrics (requests, fills, impressions, clicks)</h3>
+      <p><strong>Quasi Poisson test:</strong> variance = φ × expected instead of expected.</p>
+      <div class="formula">z = (observed − expected) / √(φ · expected)</div>
+      <p><strong>Why?</strong> Request counts correlate (shared traffic conditions). Pure Poisson understates noise.</p>
+
+      <h3>3. Ratio metrics (ecpm, rpr)</h3>
+      <p><strong>Log ratio test with Student's t:</strong> work in log space, MAD for spread, t distribution with k−1 df.</p>
+      <div class="formula">
+        t = (log(observed) − median(log history))) / (max(σ<sub>MAD</sub>, floor) · √(1 + 1/k))
+      </div>
+      <p><strong>Why Student's t, not normal?</strong> With only 4 history points, treating estimated spread as exact produced absurd p values (e.g. 1.6e−155 for a 5% move). t prices in uncertainty.</p>
+      <p><strong>Why log?</strong> eCPM moves are proportional ("down 10%") not additive ("down $0.50").</p>
+
+      <h3>Baseline pooling (critical detail)</h3>
+      <p>Expected rate = <code>sum(fills) / sum(requests)</code> over kept weeks. Never average of weekly rates unless volumes match.</p>
+
+      <span class="badge tech">Structural detector</span>
+
+      <h2>Structural: Tukey median polish</h2>
+      <p>For each 2 way combo in the window, fit on log(metric value):</p>
+      <div class="formula">log(v) ≈ grand + row_effect + column_effect</div>
+      <p>Fit by repeatedly subtracting medians along rows and columns (robust to outliers).</p>
+      <p><strong>Residual</strong> = what's left. Big residual = cell doesn't match what its row and column predict.</p>
+      <p>Flag if |residual| / sampling_error &gt; z_threshold (default 5.0).</p>
+
+      <div class="callout simple">
+        <strong>Compensating pair example:</strong> Banner eCPM down, Video eCPM up, total flat.
+        Additive fit expects each cell near row+column. Both legs have huge residuals even though total is fine.
+      </div>
+
+      <p><strong>Why medians not means?</strong> The anomaly would pull the fit toward itself and hide in the residual.</p>
+      <p><strong>Alternatives:</strong> ANOVA on means (not robust), isolation forest (black box, hard to audit), SHAP (needs ML model).</p>
+
+      <span class="badge tech">Benjamini Hochberg</span>
+
+      <h2>False discovery control (temporal only)</h2>
+      <p>Sort p values. Find largest rank k where p<sub>(k)</sub> ≤ α · k / m. Keep findings 1..k.</p>
+      <p>m = total hypotheses <em>tested</em>, not just those with small p. Understating m makes correction silently permissive.</p>
+      <p><strong>Why BH not Bonferroni?</strong> Bonferroni is very conservative with thousands of correlated segments. FDR targets expected false discovery rate, better for exploratory monitoring.</p>
+
+      <span class="badge tech">Localization</span>
+
+      <h2>Counterfactual localization</h2>
+      <p>Ranking stopped. Each candidate faces tests that can <strong>fail</strong>:</p>
+
+      <table>
+        <tr><th>Test</th><th>Question</th><th>Pass means</th></tr>
+        <tr><td><strong>Sufficiency</strong></td><td>Remove candidate from parent. Does parent return to expected?</td><td>Candidate explains the move (driver)</td></tr>
+        <tr><td><strong>Minimality</strong></td><td>Remove guiltiest child. Does candidate still deviate?</td><td>Candidate is not too broad</td></tr>
+        <tr><td><strong>Maximality</strong></td><td>Did siblings move the same way?</td><td>Candidate is not too narrow</td></tr>
+        <tr><td><strong>Holdout</strong></td><td>Effect in both half windows?</td><td>Not a one off spike</td></tr>
+      </table>
+
+      <div class="callout simple">
+        <strong>Android 15 example:</strong> Remove Android 15 → global fill rate recovers. Sufficiency passes.
+        Remove Galaxy S23 → almost no recovery. Sufficiency fails. Galaxy S23 is a passenger.
+      </div>
+
+      <p>Outcomes: <code>localized</code> (one accused survived all tests), <code>unlocalized</code> (something moved, no candidate survived).</p>
+      <p>From one 24h run: 287 candidates, only 1 accused. 174 rejected as too narrow, 45 too broad, etc.</p>
+
+      <h2>Rate / mix decomposition</h2>
+      <p>For ratio metrics, total change splits exactly into three terms:</p>
+      <div class="formula">
+        ΔR = Rate term + Mix term + Interaction term
+      </div>
+      <ul>
+        <li><strong>Rate:</strong> segment rates changed, shares held at baseline</li>
+        <li><strong>Mix:</strong> traffic shares shifted toward segments with different baseline rates</li>
+        <li><strong>Interaction:</strong> both moved together</li>
+      </ul>
+      <p>Android 15 incident: ~100% rate term, ~0% mix → real outage, not demand shift.</p>
+
+      <span class="badge tech">Confidence</span>
+
+      <h2>Confidence score (five components)</h2>
+      <table>
+        <tr><th>Component</th><th>Weight</th><th>Measures</th></tr>
+        <tr><td>Significance</td><td>0.25</td><td>Strength of statistical evidence (p value in log decades)</td></tr>
+        <tr><td>Sufficiency</td><td>0.30</td><td>How much removing accused restores parent</td></tr>
+        <tr><td>Minimality</td><td>0.15</td><td>Candidate not overly broad</td></tr>
+        <tr><td>Stability</td><td>0.15</td><td>Holdout reproduced</td></tr>
+        <tr><td>Separation</td><td>0.15</td><td>Accused vs next best candidate</td></tr>
+      </table>
+      <p>Unknown tests withdraw their weight; remaining weights renormalize. No ML. Same inputs → same score.</p>
+      <p>Publish threshold default: 0.50</p>
+
+      <h2>Narration (LLM guard)</h2>
+      <p>LLM receives a bundle of pre computed claims. Every number in prose is verified against the bundle.
+        Unsupported numbers → template fallback. <code>--no-llm</code> changes wording only; zero number changes.</p>
+
+      <h2>Algorithm choice summary</h2>
+      <table>
+        <tr><th>Choice</th><th>Why Verdict picked it</th><th>Main alternative</th></tr>
+        <tr><td>Lattice rollups</td><td>150× compression vs full grain at daily</td><td>One row per full dimension tuple</td></tr>
+        <tr><td>Two detectors</td><td>Each covers the other's blind spot</td><td>Single anomaly model</td></tr>
+        <tr><td>Counterfactual localization</td><td>Separates drivers from passengers</td><td>Rank by delta</td></tr>
+        <tr><td>BH FDR</td><td>Thousands of tests per run</td><td>Bonferroni (too harsh)</td></tr>
+        <tr><td>Robust dispersion</td><td>One bad baseline week shouldn't silence detector</td><td>Mean based φ</td></tr>
+        <tr><td>Student's t on ratios</td><td>4 history samples, estimated scale</td><td>Normal z (overconfident)</td></tr>
+      </table>
+
+      <h2>Known limitations (honest)</h2>
+      <ul>
+        <li>Baseline not validated by backtest yet → iOS 17.5 miss on unseen bundle</li>
+        <li>No trend model → slow drifts partially absorbed into baseline</li>
+        <li>Holdout is not a true out of sample test (same window used for selection)</li>
+        <li>No iterative peeling → one dominant cause can mask a smaller one</li>
+        <li>High cardinality IDs (app_id) outside lattice by design</li>
+        <li>Counterfactuals are accounting attribution, not causal proof of mechanism</li>
+      </ul>
+
+      <h2>Synthetic testing (<code>verdict inject</code>)</h2>
+      <p>
+        Plants known incidents (main effect, interaction, compensating pair, clean window) with answer keys.
+        493 unit tests cover stats, counterfactuals, decomposition, confidence, narration guard.
+      </p>
+
+      <div class="nav_footer">
+        <a href="04_windows_sampling.html">← Chapter 4</a>
+        <a href="06_evidence_tracing.html">Chapter 6: Evidence &amp; Tracing →</a>
+      </div>
+    </main>
+  </div>
+</body>
+</html>

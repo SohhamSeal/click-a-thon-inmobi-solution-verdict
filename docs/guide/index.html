@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Verdict Guide</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="layout">
+    <nav class="sidebar">
+      <h2>Verdict Guide</h2>
+      <a href="index.html" class="active">Home</a>
+      <a href="01_problem.html">1. Problem</a>
+      <a href="02_data.html">2. Data</a>
+      <a href="03_streaming_db.html">3. Streaming &amp; DB</a>
+      <a href="04_windows_sampling.html">4. Windows</a>
+      <a href="05_algorithms.html">5. Algorithms</a>
+      <a href="06_evidence_tracing.html">6. Evidence &amp; Tracing</a>
+      <a href="07_product.html">7. Product</a>
+    </nav>
+    <main class="main">
+      <h1>Verdict: Complete Learning Guide</h1>
+      <p class="subtitle">From ad events to root cause, explained in plain English with real hackathon examples.</p>
+
+      <p class="lead">
+        <strong>Verdict</strong> is an automated investigator for ad tech metrics. When fill rate, CTR, or revenue moves,
+        it finds which segment caused the move, proves the claim with counterfactual tests, and publishes what it ruled out.
+        The numbers decide everything. A language model only writes the summary prose.
+      </p>
+
+      <div class="card info">
+        <strong>How to use this guide:</strong> Read in order if you are new. Each page starts with a simple story,
+        then goes deeper into the technical details. Real incidents from the ClickHouse Click a thon 2026 dataset
+        are used throughout.
+      </div>
+
+      <h2>The journey in one picture</h2>
+      <figure class="diagram">
+        <svg viewBox="0 0 720 200" width="720" height="200" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+              <path d="M0,0 L8,3 L0,6 Z" fill="#4da3ff"/>
+            </marker>
+          </defs>
+          <rect x="10" y="70" width="90" height="50" rx="6" fill="#243044" stroke="#4da3ff"/>
+          <text x="55" y="100" text-anchor="middle" fill="#e8edf4" font-size="11">Parquet + CSV</text>
+          <line x1="100" y1="95" x2="130" y2="95" stroke="#4da3ff" marker-end="url(#arrow)"/>
+          <rect x="135" y="70" width="90" height="50" rx="6" fill="#243044" stroke="#4da3ff"/>
+          <text x="180" y="100" text-anchor="middle" fill="#e8edf4" font-size="11">ClickHouse</text>
+          <line x1="225" y1="95" x2="255" y2="95" stroke="#4da3ff" marker-end="url(#arrow)"/>
+          <rect x="260" y="70" width="90" height="50" rx="6" fill="#243044" stroke="#7c5cff"/>
+          <text x="305" y="100" text-anchor="middle" fill="#e8edf4" font-size="11">Detect</text>
+          <line x1="350" y1="95" x2="380" y2="95" stroke="#4da3ff" marker-end="url(#arrow)"/>
+          <rect x="385" y="70" width="90" height="50" rx="6" fill="#243044" stroke="#7c5cff"/>
+          <text x="430" y="100" text-anchor="middle" fill="#e8edf4" font-size="11">Localize</text>
+          <line x1="475" y1="95" x2="505" y2="95" stroke="#4da3ff" marker-end="url(#arrow)"/>
+          <rect x="510" y="70" width="90" height="50" rx="6" fill="#243044" stroke="#3dd68c"/>
+          <text x="555" y="100" text-anchor="middle" fill="#e8edf4" font-size="11">Case file</text>
+          <line x1="600" y1="95" x2="630" y2="95" stroke="#4da3ff" marker-end="url(#arrow)"/>
+          <rect x="635" y="70" width="75" height="50" rx="6" fill="#243044" stroke="#3dd68c"/>
+          <text x="672" y="100" text-anchor="middle" fill="#e8edf4" font-size="10">Console</text>
+          <text x="360" y="30" text-anchor="middle" fill="#9aa8bc" font-size="12">One command: verdict investigate --start 2026-07-05 --hours 24</text>
+          <text x="360" y="165" text-anchor="middle" fill="#9aa8bc" font-size="11">~6 seconds end to end for a 24 hour window (analysis ~2s, rest is ingest if needed)</text>
+        </svg>
+        <figcaption>The full pipeline from raw ad events to a case you can audit in the web console.</figcaption>
+      </figure>
+
+      <h2>Chapters</h2>
+      <div class="hero_grid">
+        <a class="hero_card" href="01_problem.html">
+          <h3>1. The Problem</h3>
+          <p>Why ranking segments fails. Passengers vs drivers. The InMobi use case.</p>
+        </a>
+        <a class="hero_card" href="02_data.html">
+          <h3>2. The Data</h3>
+          <p>Ad events, dimension tables, how IDs link, and the ten metrics.</p>
+        </a>
+        <a class="hero_card" href="03_streaming_db.html">
+          <h3>3. Streaming &amp; Database</h3>
+          <p>How events become rollups. Materialized views, lattice, grains.</p>
+        </a>
+        <a class="hero_card" href="04_windows_sampling.html">
+          <h3>4. Windows &amp; Sampling</h3>
+          <p>What time range we look at, baselines, and what gets tested vs skipped.</p>
+        </a>
+        <a class="hero_card" href="05_algorithms.html">
+          <h3>5. Algorithms</h3>
+          <p>Detectors, stats tests, FDR correction, counterfactuals, confidence.</p>
+        </a>
+        <a class="hero_card" href="06_evidence_tracing.html">
+          <h3>6. Evidence &amp; Tracing</h3>
+          <p>ClickStack, HyperDX, case_steps, and the evidence ledger.</p>
+        </a>
+        <a class="hero_card" href="07_product.html">
+          <h3>7. The Product</h3>
+          <p>Web console, trace tree, waterfall, Verdict.AI, and demo walkthrough.</p>
+        </a>
+      </div>
+
+      <h2>Quick glossary</h2>
+      <table>
+        <tr><th>Term</th><th>Plain meaning</th></tr>
+        <tr><td><code>segment</code></td><td>A slice of traffic, like "region = APAC" or "os_version = Android 15"</td></tr>
+        <tr><td><code>lattice</code></td><td>All 1 way and 2 way segment combinations we pre compute and scan</td></tr>
+        <tr><td><code>rollup</code></td><td>Pre summed counters (requests, fills, etc.) grouped by time bucket and segment</td></tr>
+        <tr><td><code>baseline</code></td><td>What we expected based on the same segment's past weeks</td></tr>
+        <tr><td><code>finding</code></td><td>A segment whose metric moved more than normal variation explains</td></tr>
+        <tr><td><code>case</code></td><td>A published verdict with evidence, confidence, narrative, and trace</td></tr>
+        <tr><td><code>passenger</code></td><td>A segment that moved because a parent segment moved, not because it broke on its own</td></tr>
+      </table>
+
+      <div class="nav_footer">
+        <span></span>
+        <a href="01_problem.html">Start with Chapter 1 →</a>
+      </div>
+    </main>
+  </div>
+</body>
+</html>

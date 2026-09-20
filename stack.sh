@@ -12,13 +12,26 @@ usage() {
   cat <<'EOF'
 Usage:
   ./stack.sh                         Interactive menu
-  ./stack.sh up [--with-ai]          Start the product, optionally with Cursor recommendations
+  ./stack.sh up [options]            Start the product
   ./stack.sh down                    Stop the complete stack
-  ./stack.sh status                  Show service status
+  ./stack.sh status|ps               Show service status
   ./stack.sh logs [SERVICE]          Follow logs (all services by default)
-  ./stack.sh rebuild [--with-ai]     Rebuild product images
+  ./stack.sh rebuild [options]       Rebuild product images
   ./stack.sh doctor [--with-ai]      Validate Docker and Compose configuration
   ./stack.sh help
+
+Options (up and rebuild):
+  --with-ai                 Start the optional Cursor recommendations profile
+  --web-port PORT           Host port for the console (default: WEB_PORT in .env, else 3000)
+  --mcp-port PORT           Host port for the ClickHouse MCP server (default: MCP_PORT in .env, else 8001)
+  --librechat-port PORT     Host port for LibreChat (default: LIBRECHAT_PORT in .env, else 3080)
+
+Examples:
+  ./stack.sh up --web-port 3100 --mcp-port 8101
+  ./stack.sh up --with-ai --web-port 3100
+
+Port overrides apply to this invocation only unless you also add them to .env. If you change
+MCP_PORT, update .cursor/mcp.json (or Cursor MCP settings) to match.
 
 The AI profile requires CURSOR_API_KEY in the environment or root .env. Starting it makes the
 UI control available, but the browser toggle remains off until a user explicitly enables it.
@@ -130,15 +143,70 @@ wait_for_ai() {
   return 1
 }
 
+port_value() {
+  local cli="$1"
+  local env_key="$2"
+  local default="$3"
+  local file=""
+
+  if [[ -n "$cli" ]]; then
+    printf '%s' "$cli"
+    return 0
+  fi
+  if [[ -n "${!env_key:-}" ]]; then
+    printf '%s' "${!env_key}"
+    return 0
+  fi
+  file="$(env_file_value "$env_key")"
+  if [[ -n "$file" ]]; then
+    printf '%s' "$file"
+    return 0
+  fi
+  printf '%s' "$default"
+}
+
+validate_port() {
+  local label="$1"
+  local value="$2"
+  [[ "$value" =~ ^[0-9]+$ ]] || die "$label must be a number, got: $value"
+  (( value >= 1 && value <= 65535 )) || die "$label must be between 1 and 65535, got: $value"
+}
+
+apply_port_overrides() {
+  local web_port mcp_port librechat_port
+
+  web_port="$(port_value "${STACK_WEB_PORT:-}" WEB_PORT 3000)"
+  mcp_port="$(port_value "${STACK_MCP_PORT:-}" MCP_PORT 8001)"
+  librechat_port="$(port_value "${STACK_LIBRECHAT_PORT:-}" LIBRECHAT_PORT 3080)"
+
+  validate_port "web port" "$web_port"
+  validate_port "MCP port" "$mcp_port"
+  validate_port "LibreChat port" "$librechat_port"
+
+  export WEB_PORT="$web_port"
+  export MCP_PORT="$mcp_port"
+  export LIBRECHAT_PORT="$librechat_port"
+  export NEXT_PUBLIC_CHAT_URL="http://localhost:${librechat_port}"
+}
+
+print_stack_urls() {
+  local with_ai="$1"
+  printf 'Console:    http://localhost:%s\n' "$WEB_PORT"
+  printf 'LibreChat:  http://localhost:%s\n' "$LIBRECHAT_PORT"
+  printf 'MCP (SSE):  http://localhost:%s/sse\n' "$MCP_PORT"
+  if [[ "$with_ai" == true ]]; then
+    local cursor_port
+    cursor_port="$(port_value "" CURSOR_AGENT_PORT 8157)"
+    validate_port "Cursor agent port" "$cursor_port"
+    printf 'Cursor AI:  http://localhost:%s\n' "$cursor_port"
+  fi
+}
+
 start_stack() {
   local with_ai="$1"
-  local web_port="${WEB_PORT:-}"
 
   require_docker
-  if [[ -z "$web_port" ]]; then
-    web_port="$(env_file_value WEB_PORT)"
-  fi
-  web_port="${web_port:-3000}"
+  apply_port_overrides
 
   if [[ "$with_ai" == true ]]; then
     require_cursor_key
@@ -156,11 +224,14 @@ start_stack() {
       die "Cursor CLI did not become healthy; the core product remains running."
     fi
     printf 'Verdict is running with optional AI recommendations available.\n'
-    printf 'Open http://localhost:%s and enable the UI toggle when wanted.\n' \
-      "$web_port"
+    printf 'Enable the UI toggle in the console when wanted.\n'
   else
-    printf 'Verdict is running at http://localhost:%s (AI recommendations disabled).\n' \
-      "$web_port"
+    printf 'Verdict is running (AI recommendations disabled).\n'
+  fi
+  print_stack_urls "$with_ai"
+  if [[ -n "${STACK_MCP_PORT:-}" ]]; then
+    printf 'Note: MCP port changed — point .cursor/mcp.json at http://localhost:%s/sse\n' \
+      "$MCP_PORT"
   fi
 }
 
@@ -168,6 +239,7 @@ rebuild_stack() {
   local with_ai="$1"
 
   require_docker
+  apply_port_overrides
   if [[ "$with_ai" == true ]]; then
     require_cursor_key
     validate_cursor_ca
@@ -214,14 +286,41 @@ doctor() {
     "$([[ "$with_ai" == true ]] && printf ' for AI mode' || true)"
 }
 
-parse_ai_flag() {
-  if [[ $# -eq 0 ]]; then
-    printf false
-  elif [[ $# -eq 1 && "$1" == "--with-ai" ]]; then
-    printf true
-  else
-    die "Expected no option or --with-ai."
-  fi
+STACK_WEB_PORT=""
+STACK_MCP_PORT=""
+STACK_LIBRECHAT_PORT=""
+STACK_WITH_AI=false
+
+parse_stack_options() {
+  STACK_WITH_AI=false
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --with-ai)
+        STACK_WITH_AI=true
+        shift
+        ;;
+      --web-port)
+        [[ $# -ge 2 ]] || die "--web-port requires a value."
+        STACK_WEB_PORT="$2"
+        shift 2
+        ;;
+      --mcp-port)
+        [[ $# -ge 2 ]] || die "--mcp-port requires a value."
+        STACK_MCP_PORT="$2"
+        shift 2
+        ;;
+      --librechat-port)
+        [[ $# -ge 2 ]] || die "--librechat-port requires a value."
+        STACK_LIBRECHAT_PORT="$2"
+        shift 2
+        ;;
+      *)
+        die "Unknown option: $1"
+        ;;
+    esac
+  done
+
 }
 
 interactive_menu() {
@@ -267,12 +366,15 @@ main() {
 
   case "$command" in
     menu) interactive_menu ;;
-    up) start_stack "$(parse_ai_flag "$@")" ;;
+    up)
+      parse_stack_options "$@"
+      start_stack "$STACK_WITH_AI"
+      ;;
     down)
       [[ $# -eq 0 ]] || die "down does not accept options."
       stop_stack
       ;;
-    status)
+    status|ps)
       [[ $# -eq 0 ]] || die "status does not accept options."
       show_status
       ;;
@@ -280,8 +382,19 @@ main() {
       [[ $# -le 1 ]] || die "logs accepts at most one service name."
       follow_logs "$@"
       ;;
-    rebuild) rebuild_stack "$(parse_ai_flag "$@")" ;;
-    doctor) doctor "$(parse_ai_flag "$@")" ;;
+    rebuild)
+      parse_stack_options "$@"
+      rebuild_stack "$STACK_WITH_AI"
+      ;;
+    doctor)
+      if [[ $# -eq 0 ]]; then
+        doctor false
+      elif [[ $# -eq 1 && "$1" == "--with-ai" ]]; then
+        doctor true
+      else
+        die "doctor accepts no option or --with-ai only."
+      fi
+      ;;
     help|-h|--help)
       [[ $# -eq 0 ]] || die "help does not accept options."
       usage

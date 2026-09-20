@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>6. Evidence &amp; Tracing — Verdict Guide</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="layout">
+    <nav class="sidebar">
+      <h2>Verdict Guide</h2>
+      <a href="index.html">Home</a>
+      <a href="01_problem.html">1. Problem</a>
+      <a href="02_data.html">2. Data</a>
+      <a href="03_streaming_db.html">3. Streaming &amp; DB</a>
+      <a href="04_windows_sampling.html">4. Windows</a>
+      <a href="05_algorithms.html">5. Algorithms</a>
+      <a href="06_evidence_tracing.html" class="active">6. Evidence &amp; Tracing</a>
+      <a href="07_product.html">7. Product</a>
+    </nav>
+    <main class="main">
+      <h1>Chapter 6: Evidence and Tracing</h1>
+      <p class="subtitle">How claims are tracked, what ClickStack and HyperDX do, and how traces reach the console.</p>
+
+      <span class="badge simple">Simple first</span>
+
+      <h2>What is "evidence" in Verdict?</h2>
+      <p>Evidence is not a PDF attachment. It is <strong>structured, queryable proof</strong> stored in ClickHouse:</p>
+      <ul>
+        <li>The accused segment and its test statistics</li>
+        <li>Every alternative candidate and why it was cleared</li>
+        <li>Step by step investigation log (what / why / result / SQL)</li>
+        <li>Confidence arithmetic you can dispute line by line</li>
+        <li>Coverage gaps (what we could not test)</li>
+      </ul>
+
+      <div class="callout simple">
+        <strong>Design principle:</strong> A verdict that only names a culprit is unfalsifiable.
+        A verdict that also publishes exonerations can be checked: if the accused is wrong,
+        the reason the right segment was cleared should be in the table.
+      </div>
+
+      <h2>Three consumers, one record</h2>
+      <p>Each investigation step is captured once with three fields: <strong>what</strong>, <strong>why</strong>, <strong>result</strong>.</p>
+      <p>That single record feeds:</p>
+      <ol>
+        <li><strong>HyperDX</strong> (via OpenTelemetry spans) for distributed trace waterfall</li>
+        <li><strong>case_steps</strong> table for durable audit inside ClickHouse</li>
+        <li><strong>Web console</strong> trace tree and waterfall UI</li>
+      </ol>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 580 260" width="580" height="260" xmlns="http://www.w3.org/2000/svg">
+          <defs><marker id="b" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#4da3ff"/></marker></defs>
+          <rect x="200" y="15" width="180" height="45" rx="6" fill="#243044" stroke="#4da3ff"/>
+          <text x="290" y="42" text-anchor="middle" fill="#e8edf4" font-size="12">verdict investigate</text>
+          <line x1="290" y1="60" x2="290" y2="85" stroke="#4da3ff" marker-end="url(#b)"/>
+          <rect x="170" y="90" width="240" height="50" rx="6" fill="#7c5cff33" stroke="#7c5cff"/>
+          <text x="290" y="112" text-anchor="middle" fill="#e8edf4" font-size="11">Tracer: one root span per run</text>
+          <text x="290" y="128" text-anchor="middle" fill="#9aa8bc" font-size="10">audit → detect → correct → localize → confidence → narrate</text>
+          <line x1="200" y1="140" x2="100" y2="175" stroke="#4da3ff" marker-end="url(#b)"/>
+          <line x1="290" y1="140" x2="290" y2="175" stroke="#4da3ff" marker-end="url(#b)"/>
+          <line x1="380" y1="140" x2="480" y2="175" stroke="#4da3ff" marker-end="url(#b)"/>
+          <rect x="20" y="180" width="160" height="55" rx="6" fill="#1a2332" stroke="#3dd68c"/>
+          <text x="100" y="202" text-anchor="middle" fill="#3dd68c" font-size="11">OTLP → Collector</text>
+          <text x="100" y="218" text-anchor="middle" fill="#9aa8bc" font-size="10">→ HyperDX UI</text>
+          <rect x="210" y="180" width="160" height="55" rx="6" fill="#1a2332" stroke="#3dd68c"/>
+          <text x="290" y="202" text-anchor="middle" fill="#3dd68c" font-size="11">case_steps</text>
+          <text x="290" y="218" text-anchor="middle" fill="#9aa8bc" font-size="10">ClickHouse rows</text>
+          <rect x="400" y="180" width="160" height="55" rx="6" fill="#1a2332" stroke="#3dd68c"/>
+          <text x="480" y="202" text-anchor="middle" fill="#3dd68c" font-size="11">Console UI</text>
+          <text x="480" y="218" text-anchor="middle" fill="#9aa8bc" font-size="10">tree + waterfall</text>
+        </svg>
+        <figcaption>One investigation, one trace_id on the case, many views of the same steps.</figcaption>
+      </figure>
+
+      <span class="badge tech">ClickStack and HyperDX</span>
+
+      <h2>What is ClickStack?</h2>
+      <p>
+        <strong>ClickStack</strong> is the OpenTelemetry based observability stack used in this project.
+        It exports traces, logs, and metrics via OTLP (OpenTelemetry Protocol).
+      </p>
+      <p>In config (<code>config/verdict.yaml</code>):</p>
+      <pre><code>tracing:
+  enabled: true
+  endpoint: http://localhost:4318   # OTLP HTTP
+  service_name: verdict
+  api_key: ${HYPERDX_API_KEY:-}     # HyperDX ingestion key</code></pre>
+
+      <h2>What is HyperDX?</h2>
+      <p>
+        <strong>HyperDX</strong> is the UI for viewing traces. With ClickHouse Cloud, traces are written
+        to ClickHouse and HyperDX reads them from there. No extra container needed by default.
+      </p>
+      <p>Each case stores a <code>trace_id</code>. The console links to HyperDX with the time range preset,
+        because opening Live Tail on the wrong hour looks like a "lost" trace.</p>
+
+      <h2>Span structure</h2>
+      <p>Root span: <code>investigate</code>. Children include:</p>
+      <table>
+        <tr><th>Span name</th><th>Kind</th><th>Purpose</th></tr>
+        <tr><td><code>audit</code></td><td>statistics</td><td>Is segment baseline trustworthy?</td></tr>
+        <tr><td><code>detect</code></td><td>detector</td><td>Lattice sweep summary</td></tr>
+        <tr><td><code>detect:fill_rate:region</code></td><td>detector</td><td>Per metric per combo detail</td></tr>
+        <tr><td><code>correct</code></td><td>statistics</td><td>Benjamini Hochberg</td></tr>
+        <tr><td><code>localize:fill_rate</code></td><td>localizer</td><td>Counterfactual tests</td></tr>
+        <tr><td><code>confidence</code></td><td>scoring</td><td>Five component score</td></tr>
+        <tr><td><code>narrate</code></td><td>llm</td><td>Prose generation + verification</td></tr>
+      </table>
+
+      <h2>case_steps row</h2>
+      <p>Stored fields include:</p>
+      <ul>
+        <li><code>what</code>, <code>why</code>, <code>result</code> (human readable)</li>
+        <li><code>sql</code> (queries run, so you can replay)</li>
+        <li><code>duration_ms</code>, <code>offset_ms</code> (for waterfall positioning)</li>
+        <li><code>parent_id</code> (tree structure)</li>
+      </ul>
+      <p>
+        <code>offset_ms</code> is measured from run start, not summed sibling durations.
+        Real gaps between stages show as gaps in the waterfall.
+      </p>
+
+      <span class="badge tech">Evidence ledger</span>
+
+      <h2>case_candidates table</h2>
+      <p>For each case, every candidate segment evaluated:</p>
+      <table>
+        <tr><th>Column</th><th>Meaning</th></tr>
+        <tr><td><code>status</code></td><td>accused, cleared, partial, etc.</td></tr>
+        <tr><td><code>sufficiency</code></td><td>pass / fail / unknown</td></tr>
+        <tr><td><code>minimality</code></td><td>pass / fail / unknown</td></tr>
+        <tr><td><code>maximality</code></td><td>pass / fail / unknown</td></tr>
+        <tr><td><code>holdout</code></td><td>pass / fail / unknown</td></tr>
+        <tr><td><code>reason</code></td><td>Plain English why cleared</td></tr>
+      </table>
+
+      <h2>coverage_gaps table</h2>
+      <p>Cells not tested, with:</p>
+      <ul>
+        <li><code>required</code> denominator for detection</li>
+        <li><code>actual</code> denominator available</li>
+        <li><code>resolvable_effect</code> smallest drop detectable</li>
+        <li><code>reason</code> e.g. below_detection_floor, non_positive_value</li>
+      </ul>
+
+      <h2>Self hosted ClickStack option</h2>
+      <pre><code>docker compose --profile selfhosted up -d
+# Repoint console: NEXT_PUBLIC_HYPERDX_URL=http://localhost:8080</code></pre>
+
+      <h2>Console does not require HyperDX</h2>
+      <p>
+        The investigation view reads <code>case_steps</code> from ClickHouse.
+        HyperDX is for comparing one run against everything else in the observability stack,
+        not a hard dependency for reading a case.
+      </p>
+
+      <div class="nav_footer">
+        <a href="05_algorithms.html">← Chapter 5</a>
+        <a href="07_product.html">Chapter 7: Product →</a>
+      </div>
+    </main>
+  </div>
+</body>
+</html>

@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>3. Streaming &amp; Database — Verdict Guide</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="layout">
+    <nav class="sidebar">
+      <h2>Verdict Guide</h2>
+      <a href="index.html">Home</a>
+      <a href="01_problem.html">1. Problem</a>
+      <a href="02_data.html">2. Data</a>
+      <a href="03_streaming_db.html" class="active">3. Streaming &amp; DB</a>
+      <a href="04_windows_sampling.html">4. Windows</a>
+      <a href="05_algorithms.html">5. Algorithms</a>
+      <a href="06_evidence_tracing.html">6. Evidence &amp; Tracing</a>
+      <a href="07_product.html">7. Product</a>
+    </nav>
+    <main class="main">
+      <h1>Chapter 3: Streaming and the Database</h1>
+      <p class="subtitle">How events flow into ClickHouse and become queryable rollups.</p>
+
+      <span class="badge simple">Simple first</span>
+
+      <h2>The story of streaming (in this project)</h2>
+      <p>
+        "Streaming" here does not mean Kafka or live user traffic in production.
+        It means: <strong>when new rows land in ClickHouse, rollups update automatically</strong>
+        through materialized views, without a separate batch job.
+      </p>
+
+      <ol class="step_list">
+        <li>You run <code>verdict load</code> (or ingest from the console). Parquet rows insert into <code>ad_events</code>.</li>
+        <li>A materialized view fires on each insert block. It fans each event into 46 lattice cells via one <code>ARRAY JOIN</code>.</li>
+        <li>Counters (requests, fills, impressions, clicks, revenue) sum into <code>rollup_5m</code>.</li>
+        <li>Another view aggregates 5m → 1h. Daily chains off hourly (not off 5m, because 5m is shallow).</li>
+        <li>Within ~seconds, detectors can query rollups. No separate "build aggregates" step.</li>
+      </ol>
+
+      <div class="callout simple">
+        <strong>Think of it like:</strong> a spreadsheet that auto updates pivot tables whenever you paste new rows.
+        The pivot tables are the rollups. The paste is the insert.
+      </div>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 600 320" width="600" height="320" xmlns="http://www.w3.org/2000/svg">
+          <defs><marker id="ar" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#4da3ff"/></marker></defs>
+          <rect x="220" y="10" width="160" height="40" rx="6" fill="#243044" stroke="#4da3ff"/>
+          <text x="300" y="35" text-anchor="middle" fill="#e8edf4" font-size="12">ad_events (raw)</text>
+          <line x1="300" y1="50" x2="300" y2="75" stroke="#4da3ff" marker-end="url(#ar)"/>
+          <text x="380" y="68" fill="#9aa8bc" font-size="10">mv_5m (ARRAY JOIN × 46)</text>
+          <rect x="220" y="80" width="160" height="40" rx="6" fill="#243044" stroke="#7c5cff"/>
+          <text x="300" y="105" text-anchor="middle" fill="#e8edf4" font-size="12">rollup_5m</text>
+          <line x1="300" y1="120" x2="300" y2="145" stroke="#4da3ff" marker-end="url(#ar)"/>
+          <rect x="220" y="150" width="160" height="40" rx="6" fill="#243044" stroke="#7c5cff"/>
+          <text x="300" y="175" text-anchor="middle" fill="#e8edf4" font-size="12">rollup_1h</text>
+          <line x1="300" y1="190" x2="300" y2="215" stroke="#4da3ff" marker-end="url(#ar)"/>
+          <rect x="220" y="220" width="160" height="40" rx="6" fill="#243044" stroke="#7c5cff"/>
+          <text x="300" y="245" text-anchor="middle" fill="#e8edf4" font-size="12">rollup_1d</text>
+          <line x1="300" y1="260" x2="300" y2="285" stroke="#3dd68c" marker-end="url(#ar)"/>
+          <rect x="180" y="290" width="240" height="25" rx="4" fill="#3dd68c22" stroke="#3dd68c"/>
+          <text x="300" y="307" text-anchor="middle" fill="#3dd68c" font-size="11">verdict investigate reads rollups</text>
+          <text x="80" y="105" fill="#9aa8bc" font-size="10">depth 1 only</text>
+          <text x="80" y="175" fill="#9aa8bc" font-size="10">depth 1 + 2</text>
+          <text x="80" y="245" fill="#9aa8bc" font-size="10">depth 1 + 2</text>
+        </svg>
+        <figcaption>Grain chain: 5 minute rollups are shallow; hourly and daily include two way cells.</figcaption>
+      </figure>
+
+      <span class="badge tech">Going deeper</span>
+
+      <h2>Why one ARRAY JOIN, not 46 views</h2>
+      <p>
+        Each combo could have its own materialized view. With 46 views, the streaming path and the backfill path
+        have 46 chances to define a bucket boundary slightly differently. Any disagreement shows up as a fake step
+        change in the data that looks like a real incident.
+      </p>
+      <p>
+        One shared SQL definition is used for both the live view and historical backfill, so they cannot drift.
+      </p>
+
+      <h2>Rollup row shape</h2>
+      <p>Each rollup row stores:</p>
+      <pre><code>(bucket, combo, key_a, key_b, requests, fills, impressions, clicks, revenue)</code></pre>
+      <p>Examples:</p>
+      <table>
+        <tr><th>combo</th><th>key_a</th><th>key_b</th><th>Meaning</th></tr>
+        <tr><td><code>__all__</code></td><td>""</td><td>""</td><td>Grand total</td></tr>
+        <tr><td><code>region</code></td><td>APAC</td><td>""</td><td>All APAC traffic</td></tr>
+        <tr><td><code>region|os_version</code></td><td>APAC</td><td>iOS 18.1</td><td>APAC and iOS 18.1 intersection</td></tr>
+      </table>
+
+      <h2>Lattice depth by grain (power decision)</h2>
+      <table>
+        <tr><th>Grain</th><th>Depth</th><th>Why</th></tr>
+        <tr><td>5m</td><td>1 way only</td><td>Two way cells at 5m median ~0.5 requests. Useless for stats.</td></tr>
+        <tr><td>1h</td><td>1 way + 2 way</td><td>Enough traffic per cell for localization</td></tr>
+        <tr><td>1d</td><td>1 way + 2 way</td><td>Best power for thin segments</td></tr>
+      </table>
+
+      <h2>Dictionaries</h2>
+      <p>
+        At rollup time, ClickHouse resolves <code>app_id → category</code> via a dictionary (<code>dictGet</code>),
+        not a join. This keeps the fact table narrow and lookups fast.
+      </p>
+      <p>
+        <strong>Critical ops detail:</strong> on multi node ClickHouse Cloud, dictionary reload is node local.
+        A stale dictionary can make row counts match but every segment name the wrong population.
+        The loader now reloads <code>ON CLUSTER</code> and verifies each node.
+      </p>
+
+      <h2>What gets written after investigation</h2>
+      <p>Pipeline output tables (separate from rollups):</p>
+      <table>
+        <tr><th>Table</th><th>Contents</th></tr>
+        <tr><td><code>runs</code></td><td>One row per investigate command: timing, status, config snapshot</td></tr>
+        <tr><td><code>cases</code></td><td>Verdict per incident: metric, segment, confidence, narrative, trace_id</td></tr>
+        <tr><td><code>case_candidates</code></td><td>Every candidate tested, including cleared ones and why</td></tr>
+        <tr><td><code>case_steps</code></td><td>Investigation trace tree: what, why, result, SQL, timing</td></tr>
+        <tr><td><code>coverage_gaps</code></td><td>Cells that could not be tested and the reason</td></tr>
+      </table>
+
+      <h2>Load verification (quiet failure modes)</h2>
+      <p>The loader refuses to succeed if:</p>
+      <ul>
+        <li>A CSV is a Git LFS pointer stub (looks valid, has almost no data)</li>
+        <li>Rollup totals disagree with raw event totals at any grain</li>
+        <li>Any one way combo does not sum to the grand total</li>
+        <li>Glossary metrics computed from raw vs rollup disagree</li>
+      </ul>
+
+      <h2>Performance: why batch reads matter</h2>
+      <p>
+        A 24 hour investigation issues ~20 ClickHouse queries totaling ~107ms server time.
+        Wall clock is ~2.9s because of network round trips (~170ms each from a laptop to ap south 1).
+      </p>
+      <p>
+        Default <code>read_mode: batch</code> fetches the entire lattice (window + 4 baseline weeks) in one query.
+        Alternative <code>per_combo</code> issues thousands of queries: same answers, 42.9s vs 1.9s.
+      </p>
+
+      <h2>Retention</h2>
+      <p>Configured TTLs (raw 7d, 5m 30d, 1h 180d, 1d 730d) exist for production intent.
+        <code>retention.enforce</code> defaults to <strong>false</strong> so historical hackathon data is not deleted on merge.
+      </p>
+
+      <div class="nav_footer">
+        <a href="02_data.html">← Chapter 2</a>
+        <a href="04_windows_sampling.html">Chapter 4: Windows →</a>
+      </div>
+    </main>
+  </div>
+</body>
+</html>

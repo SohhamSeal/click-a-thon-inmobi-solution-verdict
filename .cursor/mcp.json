@@ -1,7 +1,7 @@
 {
   "mcpServers": {
     "verdict-clickhouse": {
-      "url": "http://localhost:8001/sse"
+      "url": "http://localhost:8101/sse"
     }
   }
 }

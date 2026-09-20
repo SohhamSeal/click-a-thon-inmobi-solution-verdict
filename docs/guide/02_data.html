@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>2. The Data — Verdict Guide</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="layout">
+    <nav class="sidebar">
+      <h2>Verdict Guide</h2>
+      <a href="index.html">Home</a>
+      <a href="01_problem.html">1. Problem</a>
+      <a href="02_data.html" class="active">2. Data</a>
+      <a href="03_streaming_db.html">3. Streaming &amp; DB</a>
+      <a href="04_windows_sampling.html">4. Windows</a>
+      <a href="05_algorithms.html">5. Algorithms</a>
+      <a href="06_evidence_tracing.html">6. Evidence &amp; Tracing</a>
+      <a href="07_product.html">7. Product</a>
+    </nav>
+    <main class="main">
+      <h1>Chapter 2: The Data</h1>
+      <p class="subtitle">What we ingest, how tables link, and how metrics are built from counters.</p>
+
+      <span class="badge simple">Simple first</span>
+
+      <h2>What files exist</h2>
+      <p>The hackathon dataset has one big fact file and three small dimension files:</p>
+
+      <table>
+        <tr><th>File</th><th>What it is</th><th>Size (approx)</th></tr>
+        <tr><td><code>ad_events.parquet</code></td><td>Every ad request event with timestamps and flags</td><td>9M events (build corpus), 1.5M (unseen bundle)</td></tr>
+        <tr><td><code>apps.csv</code></td><td>App metadata: category, publisher tier</td><td>2,000 apps</td></tr>
+        <tr><td><code>advertisers.csv</code></td><td>Advertiser metadata: vertical, campaign type</td><td>500 advertisers</td></tr>
+        <tr><td><code>geo_device.csv</code></td><td>Device/geo profile: region, country, model, OS</td><td>5,000 profiles</td></tr>
+      </table>
+
+      <h2>One ad event, in plain English</h2>
+      <p>Each row in <code>ad_events</code> is one ad request at a moment in time:</p>
+      <ul>
+        <li><strong>Which app</strong> made the request (<code>app_id</code>)</li>
+        <li><strong>Which device/geo profile</strong> (<code>geo_device_id</code>)</li>
+        <li><strong>Which advertiser</strong> if filled (<code>advertiser_id</code>, empty if not filled)</li>
+        <li><strong>Ad format</strong> (banner, video, etc.)</li>
+        <li><strong>Flags:</strong> was it filled? impression shown? clicked?</li>
+        <li><strong>Revenue</strong> earned (if any)</li>
+      </ul>
+
+      <div class="callout simple">
+        <strong>Key idea:</strong> IDs in the event file point to rows in dimension tables.
+        <code>app_id = 42</code> might mean category = Games, publisher_tier = tier_2.
+        We never store those strings on every event. We look them up at query or rollup time.
+      </div>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 620 280" width="620" height="280" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <marker id="a" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#4da3ff"/></marker>
+          </defs>
+          <rect x="200" y="20" width="220" height="70" rx="8" fill="#243044" stroke="#4da3ff" stroke-width="2"/>
+          <text x="310" y="48" text-anchor="middle" fill="#4da3ff" font-weight="bold">ad_events</text>
+          <text x="310" y="68" text-anchor="middle" fill="#9aa8bc" font-size="11">event_time, app_id, geo_device_id,</text>
+          <text x="310" y="82" text-anchor="middle" fill="#9aa8bc" font-size="11">advertiser_id, ad_format, flags, revenue</text>
+          <line x1="180" y1="70" x2="100" y2="130" stroke="#4da3ff" marker-end="url(#a)"/>
+          <line x1="310" y1="90" x2="310" y2="130" stroke="#4da3ff" marker-end="url(#a)"/>
+          <line x1="440" y1="70" x2="520" y2="130" stroke="#4da3ff" marker-end="url(#a)"/>
+          <rect x="20" y="130" width="160" height="55" rx="6" fill="#1a2332" stroke="#7c5cff"/>
+          <text x="100" y="155" text-anchor="middle" fill="#e8edf4" font-size="12">dim_apps</text>
+          <text x="100" y="172" text-anchor="middle" fill="#9aa8bc" font-size="10">category, publisher_tier</text>
+          <rect x="230" y="130" width="160" height="55" rx="6" fill="#1a2332" stroke="#7c5cff"/>
+          <text x="310" y="155" text-anchor="middle" fill="#e8edf4" font-size="12">dim_geo_device</text>
+          <text x="310" y="172" text-anchor="middle" fill="#9aa8bc" font-size="10">region, country, os_version...</text>
+          <rect x="440" y="130" width="160" height="55" rx="6" fill="#1a2332" stroke="#7c5cff"/>
+          <text x="520" y="155" text-anchor="middle" fill="#e8edf4" font-size="12">dim_advertisers</text>
+          <text x="520" y="172" text-anchor="middle" fill="#9aa8bc" font-size="10">vertical, campaign_type</text>
+          <rect x="120" y="220" width="380" height="45" rx="6" fill="#243044" stroke="#3dd68c"/>
+          <text x="310" y="248" text-anchor="middle" fill="#3dd68c" font-size="12">Rollups: counters summed by (time bucket, segment combo)</text>
+        </svg>
+        <figcaption>Events hold IDs. Dimension tables hold attributes. Rollups denormalize at insert time via dictionaries.</figcaption>
+      </figure>
+
+      <span class="badge tech">Going deeper</span>
+
+      <h2>The ten metrics</h2>
+      <p>
+        <strong>Important design rule:</strong> the database stores only <em>additive counters</em>.
+        Metrics like fill rate are computed at read time as <code>sum(fills) / sum(requests)</code>,
+        never stored as pre averaged rates.
+      </p>
+      <p>Why? If you average hourly fill rates to get a daily rate, you get the wrong answer unless every hour had identical traffic volume. Summing counters first is always correct.</p>
+
+      <table>
+        <tr><th>Metric</th><th>Formula (plain)</th><th>Type</th></tr>
+        <tr><td>requests</td><td>count of all events</td><td>count</td></tr>
+        <tr><td>fills</td><td>count where is_filled = true</td><td>count</td></tr>
+        <tr><td>fill_rate</td><td>fills ÷ requests</td><td>rate (proportion)</td></tr>
+        <tr><td>impressions</td><td>count where is_impression = true</td><td>count</td></tr>
+        <tr><td>render_rate</td><td>impressions ÷ fills</td><td>rate</td></tr>
+        <tr><td>clicks</td><td>count where is_click = true</td><td>count</td></tr>
+        <tr><td>ctr</td><td>clicks ÷ impressions</td><td>rate</td></tr>
+        <tr><td>revenue</td><td>sum of revenue column</td><td>sum</td></tr>
+        <tr><td>ecpm</td><td>1000 × revenue ÷ impressions</td><td>ratio</td></tr>
+        <tr><td>rpr</td><td>revenue ÷ requests</td><td>ratio</td></tr>
+      </table>
+
+      <h2>The funnel and legal slices</h2>
+      <p>Not every dimension exists at every stage of the ad funnel:</p>
+      <ol>
+        <li><strong>Request</strong> — ad was requested (all events)</li>
+        <li><strong>Fill</strong> — ad was served (advertiser_id now known)</li>
+        <li><strong>Impression</strong> — ad was actually shown</li>
+      </ol>
+      <p>
+        <code>advertiser_id</code> is empty on unfilled requests. So dimensions like <code>vertical</code>
+        and <code>campaign_type</code> only exist on filled events.
+      </p>
+      <p>
+        If you slice <strong>fill_rate</strong> by <code>campaign_type</code>, the denominator silently becomes
+        "filled requests only" and every value looks like 1.0. That is an artifact, not a finding.
+        Verdict derives a <strong>validity matrix</strong> from funnel stages so illegal slices are refused.
+      </p>
+
+      <h2>Dimensions in the lattice vs out</h2>
+      <table>
+        <tr><th>In lattice (scanned)</th><th>Out of lattice (too high cardinality)</th></tr>
+        <tr>
+          <td>ad_format, category, publisher_tier, region, country, device_model, os_version, vertical, campaign_type</td>
+          <td>app_id, advertiser_id, geo_device_id</td>
+        </tr>
+      </table>
+      <p>
+        The lattice has 46 combinations: grand total (<code>__all__</code>), 9 one way slices, and 36 two way pairs.
+        Three way interactions are explicitly out of scope.
+      </p>
+
+      <h2>Revenue identity</h2>
+      <p>Revenue can be walked multiplicatively:</p>
+      <div class="formula">
+        Revenue ≈ Requests × Fill rate × Render rate × eCPM / 1000
+      </div>
+      <p>
+        When revenue moves, Verdict can attribute which <em>factor</em> moved first in log space,
+        before blaming a specific segment. This stops a price problem from being reported as a volume problem.
+      </p>
+
+      <h2>Hierarchies</h2>
+      <p>Some dimensions nest inside others:</p>
+      <ul>
+        <li><code>region</code> contains <code>country</code></li>
+        <li><code>os_family</code> contains <code>os_version</code></li>
+      </ul>
+      <p>
+        The localizer respects these so it does not report both "EU" and "Germany" as separate root causes
+        for the same incident.
+      </p>
+
+      <h2>The unseen bundle trap</h2>
+      <p>
+        In the final release, dimension tables were regenerated: same IDs, new attribute values.
+        Only 147 of 2,000 app rows stayed identical. Rollups denormalize attributes at insert time,
+        so old rollup rows encode old meanings.
+      </p>
+      <p>
+        Comparing July traffic to a June baseline for <code>region = APAC</code> can show −37% when the true
+        growth trend is +5%. Verdict's baseline audit catches some of this and falls back to sibling comparison.
+      </p>
+
+      <div class="nav_footer">
+        <a href="01_problem.html">← Chapter 1</a>
+        <a href="03_streaming_db.html">Chapter 3: Streaming &amp; DB →</a>
+      </div>
+    </main>
+  </div>
+</body>
+</html>
