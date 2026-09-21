@@ -27,12 +27,10 @@ function mark(state: StageState): string {
   }
 }
 
-/** Default stage from revealed work: active frontier, else empty, else last settled. */
+/** Default stage from revealed work: active frontier, else last settled (incl. empty). */
 function defaultStage(stages: InvStage[]): StageId {
   const active = stages.find(s => s.state === 'active');
   if (active) return active.id;
-  const empty = stages.find(s => s.state === 'empty');
-  if (empty) return empty.id;
   const lastDone = [...stages].reverse().find(s => s.state === 'complete' || s.state === 'empty');
   return lastDone?.id ?? stages[0]?.id ?? 'detect';
 }

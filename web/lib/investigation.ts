@@ -155,9 +155,19 @@ export function deriveInvestigation(steps: Step[], c: Case): InvStage[] {
 
   const verdict = confidence ? verdictMeaning(c.verdict_kind) : null;
 
-  const lane = (id: string, label: string, rows: Step[]): InvDetail => {
+  // Lanes finish when a later phase has revealed — not only when localize lands —
+  // so Time Machine does not leave Temporal/Structural stuck on ◉ after they ran.
+  const afterTemporal = structural.length > 0 || otherNames.size > 0 || Boolean(correct) || Boolean(localize);
+  const afterStructural = otherNames.size > 0 || Boolean(correct) || Boolean(localize);
+  const afterOthers = Boolean(correct) || Boolean(localize);
+
+  const lane = (id: string, label: string, rows: Step[], laterStarted: boolean): InvDetail => {
     const state: StageState =
-      rows.length === 0 ? 'pending' : investigateDone ? 'complete' : 'active';
+      rows.length === 0
+        ? 'pending'
+        : investigateDone || laterStarted
+          ? 'complete'
+          : 'active';
     const n = rows.length;
     const noun = id === 'structural' ? (n === 1 ? 'grid' : 'grids') : 'cells';
     const short =
@@ -193,10 +203,10 @@ export function deriveInvestigation(steps: Step[], c: Case): InvStage[] {
   // Always expose the fan structure once detection has begun, so pending/active
   // lanes stay visible under Investigate instead of appearing only when done.
   if (detect || investigateStarted || correct) {
-    detailsInvestigate.push(lane('temporal', 'Temporal', temporal));
-    detailsInvestigate.push(lane('structural', 'Structural', structural));
+    detailsInvestigate.push(lane('temporal', 'Temporal', temporal, afterTemporal));
+    detailsInvestigate.push(lane('structural', 'Structural', structural, afterStructural));
     for (const [prefix, rows] of otherNames) {
-      detailsInvestigate.push(lane(prefix, prefix, rows));
+      detailsInvestigate.push(lane(prefix, prefix, rows, afterOthers));
     }
     if (correct) {
       detailsInvestigate.push({

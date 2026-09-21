@@ -387,6 +387,13 @@ a.kpi:hover { border-color: var(--line2); }
 .inv-block.on .inv-block-label { color: var(--acc2); }
 .inv-block.on .inv-mark { color: var(--acc); }
 .inv-block.on .inv-block-blurb { color: var(--tx2); }
+.inv-block.empty.on {
+  background: var(--warnbg); border-color: var(--warnbd); color: var(--warntx);
+  box-shadow: inset 0 0 0 1px var(--warnbd);
+}
+.inv-block.empty.on .inv-block-label,
+.inv-block.empty.on .inv-mark { color: var(--warn); }
+.inv-block.empty.on .inv-block-blurb { color: var(--warntx); }
 .inv-block-top {
   display: flex; gap: 5px; align-items: center; min-width: 0; width: 100%;
 }
