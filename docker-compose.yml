@@ -36,7 +36,7 @@ services:
       # The collector creates its own otel_* tables on first run; no schema setup needed.
       CLICKHOUSE_ENDPOINT: https://${CLICKHOUSE_HOST:?set CLICKHOUSE_HOST in .env}:${CLICKHOUSE_PORT:-8443}
       CLICKHOUSE_USER: ${CLICKHOUSE_USER:-default}
-      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?set CLICKHOUSE_PASSWORD in .env}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
     ports:
       - "${OTLP_GRPC_PORT:-4317}:4317"
       - "${OTLP_HTTP_PORT:-4318}:4318"
@@ -125,7 +125,7 @@ services:
       CLICKHOUSE_HOST: ${CLICKHOUSE_HOST:?set CLICKHOUSE_HOST in .env}
       CLICKHOUSE_PORT: ${CLICKHOUSE_PORT:-8443}
       CLICKHOUSE_USER: ${CLICKHOUSE_USER:-default}
-      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?set CLICKHOUSE_PASSWORD in .env}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
       CLICKHOUSE_DATABASE: ${CLICKHOUSE_DATABASE:-verdict}
       CLICKHOUSE_SECURE: ${CLICKHOUSE_SECURE:-true}
 
@@ -229,7 +229,7 @@ services:
       CLICKHOUSE_HOST: ${CLICKHOUSE_HOST:?set CLICKHOUSE_HOST in .env}
       CLICKHOUSE_PORT: ${CLICKHOUSE_PORT:-8443}
       CLICKHOUSE_USER: ${CLICKHOUSE_USER:-default}
-      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?set CLICKHOUSE_PASSWORD in .env}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
       CLICKHOUSE_DATABASE: ${CLICKHOUSE_DATABASE:-verdict}
       # Must agree with the port. Pairing false with 8443 is the usual setup mistake and it
       # surfaces as an opaque HTTP client error rather than a scheme complaint.

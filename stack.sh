@@ -22,12 +22,14 @@ Usage:
 
 Options (up and rebuild):
   --with-ai                 Start the optional Cursor recommendations profile
+  --dev                     Console as next dev, bind-mounted (saves in web/ reload the UI)
+  --prod                    Console as the production Next image (rebuild to see changes)
   --web-port PORT           Host port for the console (default: WEB_PORT in .env, else 3000)
   --mcp-port PORT           Host port for the ClickHouse MCP server (default: MCP_PORT in .env, else 8001)
   --librechat-port PORT     Host port for LibreChat (default: LIBRECHAT_PORT in .env, else 3080)
 
 Examples:
-  ./stack.sh up --web-port 3100 --mcp-port 8101
+  ./stack.sh up --dev --web-port 3100 --mcp-port 8101
   ./stack.sh up --with-ai --web-port 3100
 
 Port overrides apply to this invocation only unless you also add them to .env. If you change
@@ -93,10 +95,27 @@ validate_cursor_ca() {
   fi
 }
 
+apply_compose_files() {
+  local files=(-f docker-compose.yml)
+  if [[ "${STACK_WEB_DEV:-false}" == true ]]; then
+    files+=(-f docker-compose.web-dev.yml)
+  fi
+  # Local ClickHouse overlay (default). Set CLICKHOUSE_LOCAL=false to use Cloud only.
+  local use_local
+  use_local="$(env_file_value CLICKHOUSE_LOCAL)"
+  if [[ "${CLICKHOUSE_LOCAL:-}" == "false" || "$use_local" == "false" ]]; then
+    COMPOSE=(docker compose "${files[@]}")
+  else
+    files+=(-f docker-compose.local-ch.yml)
+    COMPOSE=(docker compose "${files[@]}")
+  fi
+}
+
 compose_for_mode() {
   local with_ai="$1"
   shift
 
+  apply_compose_files
   if [[ "$with_ai" == true ]]; then
     RECOMMENDATIONS_ENABLED=true \
       "${COMPOSE[@]}" --profile recommendations "$@"
@@ -192,6 +211,11 @@ apply_port_overrides() {
 print_stack_urls() {
   local with_ai="$1"
   printf 'Console:    http://localhost:%s\n' "$WEB_PORT"
+  if [[ "${STACK_WEB_DEV:-false}" == true ]]; then
+    printf '            next dev — edits under web/ reload without rebuilding\n'
+  else
+    printf '            production image — rebuild web to see code changes\n'
+  fi
   printf 'LibreChat:  http://localhost:%s\n' "$LIBRECHAT_PORT"
   printf 'MCP (SSE):  http://localhost:%s/sse\n' "$MCP_PORT"
   if [[ "$with_ai" == true ]]; then
@@ -207,6 +231,17 @@ start_stack() {
 
   require_docker
   apply_port_overrides
+  apply_compose_files
+
+  # Local CH is the default booth path — start + seed before the rest of the stack.
+  local use_local
+  use_local="$(env_file_value CLICKHOUSE_LOCAL)"
+  if [[ "${CLICKHOUSE_LOCAL:-}" != "false" && "$use_local" != "false" ]]; then
+    bash "$ROOT_DIR/scripts/ensure_local_clickhouse.sh" up
+    # Re-read ports/hosts after ensure rewrote .env
+    apply_port_overrides
+    apply_compose_files
+  fi
 
   if [[ "$with_ai" == true ]]; then
     require_cursor_key
@@ -233,6 +268,10 @@ start_stack() {
     printf 'Note: MCP port changed — point .cursor/mcp.json at http://localhost:%s/sse\n' \
       "$MCP_PORT"
   fi
+  local ch_host ch_port
+  ch_host="$(env_file_value CLICKHOUSE_HOST)"
+  ch_port="$(env_file_value CLICKHOUSE_PORT)"
+  printf 'ClickHouse: %s:%s\n' "${ch_host:-localhost}" "${ch_port:-18123}"
 }
 
 rebuild_stack() {
@@ -257,12 +296,14 @@ rebuild_stack() {
 
 stop_stack() {
   require_docker
-  "${COMPOSE[@]}" "${ALL_PROFILES[@]}" down
+  docker compose -f docker-compose.yml -f docker-compose.web-dev.yml -f docker-compose.local-ch.yml \
+    "${ALL_PROFILES[@]}" down
 }
 
 show_status() {
   require_docker
-  "${COMPOSE[@]}" "${ALL_PROFILES[@]}" ps
+  docker compose -f docker-compose.yml -f docker-compose.web-dev.yml -f docker-compose.local-ch.yml \
+    "${ALL_PROFILES[@]}" ps
 }
 
 follow_logs() {
@@ -290,14 +331,24 @@ STACK_WEB_PORT=""
 STACK_MCP_PORT=""
 STACK_LIBRECHAT_PORT=""
 STACK_WITH_AI=false
+STACK_WEB_DEV=false
 
 parse_stack_options() {
   STACK_WITH_AI=false
+  STACK_WEB_DEV=false
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --with-ai)
         STACK_WITH_AI=true
+        shift
+        ;;
+      --dev)
+        STACK_WEB_DEV=true
+        shift
+        ;;
+      --prod)
+        STACK_WEB_DEV=false
         shift
         ;;
       --web-port)

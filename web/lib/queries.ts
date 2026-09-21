@@ -15,10 +15,13 @@ import type {
   NarrativeSource,
   Point,
   Run,
+  Series,
   Step,
   StepKind,
   VerdictKind,
 } from './types';
+
+export type { Series } from './types';
 
 /** Coverage gaps are per (run, metric, grain, window), and a wide sweep can leave thousands.
  *  The count must include every row, while the drill-down only needs the highest-volume
@@ -648,18 +651,6 @@ const WEEKS = Number.isInteger(configuredWeeks) && configuredWeeks > 0 ? configu
 const HOUR_MS = 3_600_000;
 const WEEK_MS = 7 * 24 * HOUR_MS;
 
-export interface Series {
-  metric: Metric;
-  label: string;
-  points: Point[];
-  /** Index range where observed left the expected band, or -1 when it never did. Derived
-   *  from the data rather than from a case, so the highlight cannot claim an incident the
-   *  series does not show. */
-  from: number;
-  to: number;
-  effect: number;
-}
-
 export async function getSeries(metric: Metric, startIso: string, endIso: string): Promise<Series> {
   const start = Date.parse(startIso);
   const end = Date.parse(endIso);
@@ -776,9 +767,15 @@ export async function getDashboard(runId?: string): Promise<Dashboard> {
   const cases = caseData.cases;
   const window = cases[0];
 
+  const chartMetrics = [
+    ...CHART_METRICS,
+    ...cases.map(c => c.metric).filter((m): m is Metric => !CHART_METRICS.includes(m as Metric)),
+  ];
+  const uniqueMetrics = [...new Set(chartMetrics)];
+
   const [series, spanCount] = await Promise.all([
     window
-      ? Promise.all(CHART_METRICS.map(m => getSeries(m, window.window_start, window.window_end)))
+      ? Promise.all(uniqueMetrics.map(m => getSeries(m, window.window_start, window.window_end)))
       : Promise.resolve([] as Series[]),
     rows<{ n: string }>(`SELECT count() AS n FROM default.otel_traces WHERE ServiceName = 'verdict'`),
   ]);

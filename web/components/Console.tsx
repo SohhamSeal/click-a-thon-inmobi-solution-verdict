@@ -6,11 +6,15 @@ import { CaseTable, type Sort } from './CaseTable';
 import { IngestPanel } from './IngestPanel';
 import { MetricChart } from './MetricChart';
 import { SearchIcon } from './icons';
+import { TimeMachineBar } from './TimeMachineBar';
 import { TopBar } from './TopBar';
+import { markersFromCases } from '@/lib/anomalies';
 import { healthOf, KINDS, kpiOf } from '@/lib/data';
 import { KIND_FILL, KIND_LABEL, money, priority } from '@/lib/format';
-import type { Series } from '@/lib/queries';
-import type { Case, RecommendationSet, Run, VerdictKind } from '@/lib/types';
+import { boothFixture, useReplay } from '@/lib/timemachine';
+import type { Case, RecommendationSet, Run, Series, VerdictKind } from '@/lib/types';
+
+type Mode = 'live' | 'timemachine';
 
 /** Unpriced cases sort last within their bucket rather than as zero. A case nobody could
  *  convert to revenue is of unknown size, and sorting it among the genuinely small ones
@@ -99,41 +103,97 @@ const KIND_HINT: Record<VerdictKind, string> = {
 export function Console({
   run,
   runs,
-  cases,
-  series,
-  spans,
-  coverageGaps,
+  cases: liveCases,
+  series: liveSeries,
+  spans: liveSpans,
+  coverageGaps: liveCoverageGaps,
   recommendationsEnabled,
   ingestEnabled,
-  empty,
+  empty: liveEmpty,
 }: Props) {
+  const [mode, setMode] = useState<Mode>('live');
+  const replay = useReplay(boothFixture);
+  const tm = mode === 'timemachine';
+
+  const cases = tm ? replay.derived.cases : liveCases;
+  const series = tm ? replay.derived.visibleSeries : liveSeries;
+  const spans = tm ? replay.derived.spans : liveSpans;
+  const coverageGaps = tm ? replay.derived.coverageGaps : liveCoverageGaps;
+  const empty = tm ? false : liveEmpty;
+  const activeRun = tm ? boothFixture.run : run;
+
+  const uiStatusById = useMemo(() => {
+    if (!tm) return undefined;
+    const m = new Map<string, 'investigating' | 'verdict'>();
+    for (const v of replay.derived.caseViews) m.set(v.case.case_id, v.uiStatus);
+    return m;
+  }, [tm, replay.derived.caseViews]);
+
   const [kind, setKind] = useState<VerdictKind | null>(null);
   const [pri, setPri] = useState<number | null>(null);
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState<Sort>('priority');
   const [openId, setOpenId] = useState<string | null>(null);
-  // Opening a case pushes a history entry, so Back closes the panel instead of
-  // leaving the console. Only pop what we pushed.
+  const [hoverCaseId, setHoverCaseId] = useState<string | null>(null);
   const pushed = useRef(false);
 
   const kpi = useMemo(() => kpiOf(cases, spans, coverageGaps), [cases, spans, coverageGaps]);
-  const health = useMemo(() => healthOf(run, cases), [run, cases]);
+  const health = useMemo(() => healthOf(activeRun, cases), [activeRun, cases]);
+
+  const graphMarkers = useMemo(() => {
+    if (tm) return replay.derived.graphMarkers;
+    return markersFromCases(liveCases, liveSeries, { selectedCaseId: openId });
+  }, [tm, replay.derived.graphMarkers, liveCases, liveSeries, openId]);
+
+  const focusId = hoverCaseId || openId;
+  const chartFocus = useMemo(() => {
+    if (!focusId) return null;
+    const c = cases.find(x => x.case_id === focusId);
+    if (!c) return null;
+    const view = tm ? replay.derived.caseViews.find(v => v.case.case_id === c.case_id) : undefined;
+    return {
+      case_id: c.case_id,
+      metric: c.metric,
+      segment: c.segment,
+      relative_effect: c.relative_effect,
+      direction: c.direction,
+      window_start: c.window_start,
+      window_end: c.window_end,
+      localizeDone: tm ? Boolean(view?.localizeDone) : true,
+    };
+  }, [focusId, cases, tm, replay.derived.caseViews]);
+
+  const replayCards = useMemo(() => {
+    if (!tm) return null;
+    const anomalies = replay.derived.graphMarkers.filter(m => m.observation).length;
+    const investigating = replay.derived.caseViews.filter(v => v.uiStatus === 'investigating').length;
+    const localized = replay.derived.caseViews.filter(
+      v => v.localizeDone && v.case.verdict_kind === 'localized',
+    ).length;
+    const verdicts = replay.derived.caseViews.filter(v => v.uiStatus === 'verdict').length;
+    return { anomalies, cases: kpi.cases, investigating, localized, verdicts };
+  }, [tm, replay.derived.graphMarkers, replay.derived.caseViews, kpi.cases]);
 
   useEffect(() => {
     const sync = () => {
       const h = window.location.hash.slice(1);
-      setOpenId(h ? (cases.find(c => c.case_id.startsWith(h))?.case_id ?? null) : null);
+      const id = h ? (cases.find(c => c.case_id.startsWith(h))?.case_id ?? null) : null;
+      setOpenId(id);
+      if (tm) replay.selectCase(id);
     };
     sync();
     window.addEventListener('hashchange', sync);
     return () => window.removeEventListener('hashchange', sync);
-  }, [cases]);
+  }, [cases, tm]);
 
   const open = (id: string) => {
+    if (!cases.some(c => c.case_id === id)) return;
     pushed.current = true;
     window.location.hash = id.slice(0, 12);
+    if (tm) replay.selectCase(id);
   };
   const close = () => {
+    if (tm) replay.selectCase(null);
     if (pushed.current) {
       pushed.current = false;
       window.history.back();
@@ -143,27 +203,42 @@ export function Console({
     }
   };
 
-  // Advice is generated on demand, one case at a time, and cached in ClickHouse. Sequential
-  // rather than parallel: each case is two full agent turns, and firing ten at once buys
-  // nothing but a rate limit and a bill.
+  const enterTimeMachine = () => {
+    if (mode === 'timemachine') return;
+    setMode('timemachine');
+    replay.reset();
+    setKind(null);
+    setPri(null);
+    setQuery('');
+    setOpenId(null);
+    setHoverCaseId(null);
+    window.history.replaceState(null, '', window.location.pathname);
+  };
+  const enterLive = () => {
+    if (mode === 'live') return;
+    setMode('live');
+    replay.pause();
+    setOpenId(null);
+    setHoverCaseId(null);
+    window.history.replaceState(null, '', window.location.pathname);
+  };
+
   const [recsOn, setRecsOn] = useState(false);
   const [recs, setRecs] = useState<Map<string, RecommendationSet>>(new Map());
   const [generating, setGenerating] = useState<string | null>(null);
   const [pending, setPending] = useState(0);
-  // Holds the run the queue was started for, so switching runs restarts it and a re-render
-  // does not.
   const queued = useRef<string | null>(null);
 
   const store = (set: RecommendationSet) => setRecs(prev => new Map(prev).set(set.case_id, set));
 
   async function generateFor(caseId: string, force: boolean) {
-    if (!recommendationsEnabled || !run) return;
+    if (!recommendationsEnabled || !activeRun) return;
     setGenerating(caseId);
     try {
       const res = await fetch('/api/recommendations', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ run: run.run_id, case_id: caseId, force }),
+        body: JSON.stringify({ run: activeRun.run_id, case_id: caseId, force }),
       });
       const body = await res.json();
       if (body.set) store(body.set);
@@ -185,23 +260,16 @@ export function Console({
     }
   }
 
-  // Switching the toggle on loads what exists and then generates the rest, one at a time,
-  // so nobody has to open each case and press a button. Only the missing ones: a case that
-  // already has advice is never regenerated, because each one costs about two minutes of
-  // model time and the results do not change unless the case does.
-  //
-  // Sequential on purpose. Firing seven at once buys a rate limit, and doing them in order
-  // means the queue can be abandoned part-way with everything finished so far kept.
   useEffect(() => {
-    if (!recommendationsEnabled || !recsOn || !run) return;
-    if (queued.current === run.run_id) return;
-    queued.current = run.run_id;
+    if (!recommendationsEnabled || !recsOn || !activeRun) return;
+    if (queued.current === activeRun.run_id) return;
+    queued.current = activeRun.run_id;
 
     let cancelled = false;
     (async () => {
       let missing: string[] = [];
       try {
-        const res = await fetch(`/api/recommendations?run=${encodeURIComponent(run.run_id)}`);
+        const res = await fetch(`/api/recommendations?run=${encodeURIComponent(activeRun.run_id)}`);
         const body = (await res.json()) as { sets?: Record<string, RecommendationSet>; missing?: string[] };
         if (cancelled) return;
         if (body.sets) setRecs(new Map(Object.entries(body.sets)));
@@ -219,16 +287,12 @@ export function Console({
       }
     })();
 
-    // Turning the toggle off abandons the queue. Anything already generated is in ClickHouse
-    // and comes straight back if it is switched on again -- which requires clearing the guard
-    // here, or the second switch-on matches the run it already ran for and returns without
-    // reloading anything, leaving the panel permanently empty.
     return () => {
       cancelled = true;
       queued.current = null;
       setPending(0);
     };
-  }, [recommendationsEnabled, recsOn, run]);
+  }, [recommendationsEnabled, recsOn, activeRun]);
 
   const recsReady = useMemo(
     () => [...recs.values()].filter(s => s.status === 'completed').length,
@@ -254,16 +318,30 @@ export function Console({
   }, [cases, kind, pri, query, sort]);
 
   const openCase = openId ? cases.find(c => c.case_id === openId) : null;
+  const openUiStatus = openId && uiStatusById ? uiStatusById.get(openId) : undefined;
   const window0 = cases[0];
+
+  useEffect(() => {
+    if (hoverCaseId && !cases.some(c => c.case_id === hoverCaseId)) setHoverCaseId(null);
+  }, [hoverCaseId, cases]);
 
   return (
     <div className="app">
       <TopBar
         health={health}
-        run={run}
-        windowStart={window0?.window_start ?? run?.started_at ?? ''}
-        windowEnd={window0?.window_end ?? run?.finished_at ?? ''}
+        run={activeRun}
+        windowStart={
+          tm
+            ? boothFixture.timeline.start
+            : (window0?.window_start ?? activeRun?.started_at ?? '')
+        }
+        windowEnd={
+          tm ? boothFixture.timeline.end : (window0?.window_end ?? activeRun?.finished_at ?? '')
+        }
         grain={window0?.grain ?? '1h'}
+        mode={mode}
+        onModeLive={enterLive}
+        onModeTimeMachine={enterTimeMachine}
       />
 
       <div className="body">
@@ -272,49 +350,105 @@ export function Console({
             <Empty runs={runs} coverageGaps={coverageGaps} />
           ) : (
             <div className="wrap">
+              {tm && <TimeMachineBar label={boothFixture.meta.label} replay={replay} />}
+
               <div className="kpis">
-                <div className="kpi">
-                  <span className="hd">Open cases</span>
-                  <span className="v">{kpi.cases}</span>
-                  <span className="split" title={KINDS.map(k => `${kpi.byKind[k]} ${KIND_LABEL[k]}`).join(' · ')}>
-                    {KINDS.map(k => (
-                      <i key={k} style={{ width: `${(kpi.byKind[k] / kpi.cases) * 100}%`, background: KIND_FILL[k] }} />
-                    ))}
-                  </span>
-                </div>
+                {tm && replayCards ? (
+                  <>
+                    <div
+                      className="kpi"
+                      title="Parent-series observations revealed so far — anomalous hours on __all__, not investigation clock"
+                    >
+                      <span className="hd">Anomalies</span>
+                      <span className="v">{replayCards.anomalies}</span>
+                      <span className="def">parent-series observations</span>
+                    </div>
+                    <div className="kpi" title="Cases unlocked by recorded detect/correct steps at this simTime">
+                      <span className="hd">Investigations</span>
+                      <span className="v">{replayCards.cases}</span>
+                      <span className="def">
+                        {replayCards.investigating > 0
+                          ? `${replayCards.investigating} still investigating`
+                          : 'cases in this window'}
+                      </span>
+                    </div>
+                    <div className="kpi" title="Cases whose localize step has revealed and whose stored verdict is localized">
+                      <span className="hd">Localized</span>
+                      <span className="v">{replayCards.localized}</span>
+                      <span className="def">segment named · removal held</span>
+                    </div>
+                    <div className="kpi" title="Cases past localization — verdict badge shown in the table">
+                      <span className="hd">Verdicts</span>
+                      <span className="v">{replayCards.verdicts}</span>
+                      <span className="split" title={KINDS.map(k => `${kpi.byKind[k]} ${KIND_LABEL[k]}`).join(' · ')}>
+                        {KINDS.map(k => (
+                          <i
+                            key={k}
+                            style={{
+                              width: `${(kpi.byKind[k] / Math.max(1, kpi.cases)) * 100}%`,
+                              background: KIND_FILL[k],
+                            }}
+                          />
+                        ))}
+                      </span>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="kpi">
+                      <span className="hd">Open cases</span>
+                      <span className="v">{kpi.cases}</span>
+                      <span className="split" title={KINDS.map(k => `${kpi.byKind[k]} ${KIND_LABEL[k]}`).join(' · ')}>
+                        {KINDS.map(k => (
+                          <i key={k} style={{ width: `${(kpi.byKind[k] / Math.max(1, kpi.cases)) * 100}%`, background: KIND_FILL[k] }} />
+                        ))}
+                      </span>
+                    </div>
 
-                <div
-                  className="kpi"
-                  title={
-                    kpi.unpriced
-                      ? `Losses only, never netted against recoveries. ${kpi.unpriced} of ${kpi.cases} cases measure a count that could not be converted to revenue and are excluded, so this is a floor.`
-                      : 'Losses only, never netted against recoveries: a quiet total would hide an hour in which one thing broke and another improved.'
-                  }
-                >
-                  <span className="hd">Revenue at risk</span>
-                  <span className="v fall">{money(kpi.revenueAtRisk)}</span>
-                  <span className="def">
-                    losses only · not netted
-                    {kpi.unpriced > 0 && <span style={{ color: 'var(--warn)' }}> · {kpi.unpriced} unpriced</span>}
-                  </span>
-                </div>
+                    <div
+                      className="kpi"
+                      title={
+                        kpi.unpriced
+                          ? `Losses only, never netted against recoveries. ${kpi.unpriced} of ${kpi.cases} cases measure a count that could not be converted to revenue and are excluded, so this is a floor.`
+                          : 'Losses only, never netted against recoveries: a quiet total would hide an hour in which one thing broke and another improved.'
+                      }
+                    >
+                      <span className="hd">Revenue at risk</span>
+                      <span className="v fall">{money(kpi.revenueAtRisk)}</span>
+                      <span className="def">
+                        losses only · not netted
+                        {kpi.unpriced > 0 && <span style={{ color: 'var(--warn)' }}> · {kpi.unpriced} unpriced</span>}
+                      </span>
+                    </div>
 
-                <div className="kpi">
-                  <span className="hd">Mean confidence</span>
-                  <span className="v">{kpi.meanConfidence.toFixed(2)}</span>
-                  <span className="def">
-                    {kpi.published} / {kpi.cases} engine-publishable
-                  </span>
-                </div>
+                    <div className="kpi">
+                      <span className="hd">Mean confidence</span>
+                      <span className="v">{kpi.meanConfidence.toFixed(2)}</span>
+                      <span className="def">
+                        {kpi.published} / {kpi.cases} engine-publishable
+                      </span>
+                    </div>
 
-                <div className="kpi">
-                  <span className="hd">Coverage gaps</span>
-                  <span className="v">{kpi.coverageGaps.toLocaleString()}</span>
-                  <span className="def">all untestable cells in this run</span>
-                </div>
+                    <div className="kpi">
+                      <span className="hd">Coverage gaps</span>
+                      <span className="v">{kpi.coverageGaps.toLocaleString()}</span>
+                      <span className="def">all untestable cells in this run</span>
+                    </div>
+                  </>
+                )}
               </div>
 
-              {series.length > 0 && <MetricChart series={series} />}
+              {series.length > 0 && (
+                <MetricChart
+                  series={series}
+                  markers={graphMarkers}
+                  focus={chartFocus}
+                  selectedCaseId={openId}
+                  hoverCaseId={hoverCaseId}
+                  onMarkerHover={setHoverCaseId}
+                  onMarkerClick={open}
+                />
+              )}
 
               <div className="strip">
                 <div className="fchips" role="group" aria-label="Filter by priority">
@@ -354,14 +488,9 @@ export function Console({
                   ))}
                 </div>
 
-                {/* Everything after this sits on the right: the filters describe what you are
-                    looking at, these act on it. */}
                 <div className="push" />
 
                 {recommendationsEnabled && (
-                  /* Off by default. Everything else on this page is measured; this is a model
-                     proposing actions, and opting into that should be a decision rather than
-                     something a reader discovers already switched on. */
                   <label className="aitog" title={AI_HINT}>
                     <input
                       type="checkbox"
@@ -385,7 +514,7 @@ export function Console({
                   </label>
                 )}
 
-                {ingestEnabled && <IngestPanel />}
+                {ingestEnabled && !tm && <IngestPanel />}
 
                 <div className="row" style={{ gap: 6, width: 232 }}>
                   <span className="dim2" style={{ display: 'inline-flex' }}>
@@ -401,24 +530,32 @@ export function Console({
                 </div>
               </div>
 
-              <CaseTable cases={rows} openId={openId} sort={sort} onSort={setSort} onOpen={open} />
+              <CaseTable
+                cases={rows}
+                openId={openId}
+                highlightId={hoverCaseId}
+                sort={sort}
+                onSort={setSort}
+                onOpen={open}
+                onHover={setHoverCaseId}
+                uiStatusById={uiStatusById}
+              />
             </div>
           )}
         </div>
       </div>
 
       <div className="status">
-        <span>{run ? run.run_id.slice(0, 8) : 'no run'}</span>
-        {/* Beside the cell count deliberately: the two together are the claim, and either one
-            alone invites the wrong question. */}
+        <span>{activeRun ? activeRun.run_id.slice(0, 8) : 'no run'}</span>
+        {tm && <span>recorded replay</span>}
         <span title="Temporal segment-and-metric tests; structural sibling-grid tests are separate">
           {kpi.cellsTested.toLocaleString()} temporal tests
         </span>
-        {run && run.duration_ms > 0 && (
+        {activeRun && activeRun.duration_ms > 0 && (
           <span title="Wall clock for the whole run: detection, localization and persistence">
-            {run.duration_ms < 1000
-              ? `${run.duration_ms} ms`
-              : `${(run.duration_ms / 1000).toFixed(1)}s`}
+            {activeRun.duration_ms < 1000
+              ? `${activeRun.duration_ms} ms`
+              : `${(activeRun.duration_ms / 1000).toFixed(1)}s`}
           </span>
         )}
         <span>{kpi.spans.toLocaleString()} spans</span>
@@ -426,7 +563,7 @@ export function Console({
         <span>
           {rows.length} of {kpi.cases} shown
         </span>
-        <span className="sp">{run ? `${run.finished_at.slice(11, 16)} UTC` : ''}</span>
+        <span className="sp">{activeRun ? `${activeRun.finished_at.slice(11, 16)} UTC` : ''}</span>
       </div>
 
       {openCase && (
@@ -438,6 +575,7 @@ export function Console({
           recsEnabled={recommendationsEnabled && recsOn}
           recsBusy={generating === openCase.case_id}
           onGenerate={force => generateFor(openCase.case_id, force)}
+          uiStatus={openUiStatus}
         />
       )}
     </div>

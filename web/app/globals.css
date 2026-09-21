@@ -210,6 +210,17 @@ a.kpi:hover { border-color: var(--line2); }
 .clegend span { display: inline-flex; align-items: center; gap: 5px; }
 .clegend i { width: 12px; border-top: 2px solid; display: block; }
 .cfoot { display: flex; align-items: center; gap: 9px; padding: 6px 12px 10px; }
+.anomtip {
+  position: absolute; bottom: 28px; z-index: 4;
+  min-width: 180px; max-width: 220px; padding: 8px 10px;
+  background: var(--panel); border: 1px solid var(--err); border-radius: 7px;
+  box-shadow: var(--shadow); pointer-events: none;
+}
+.anomtip-t { font: 600 11px var(--mono); color: var(--tx); margin-bottom: 6px; }
+.anomtip-row { display: flex; justify-content: space-between; gap: 12px; font: 11px var(--mono); color: var(--tx2); margin-top: 2px; }
+.anomtip-row strong { color: var(--tx); }
+.anomtip-note { margin-top: 7px; font: 9px var(--mono); color: var(--tx3); line-height: 1.35; }
+.anomtip-seg { margin-top: 5px; font: 10px var(--mono); color: var(--tx2); }
 
 /* ---------- tables ---------- */
 .tblbox { border: 1px solid var(--line); border-radius: 9px; overflow: hidden; background: var(--panel); }
@@ -236,6 +247,8 @@ a.kpi:hover { border-color: var(--line2); }
 .tbl tbody tr:hover td { background: var(--panel2); }
 .tbl tbody tr[aria-selected='true'] td { background: var(--accbg); }
 .tbl tbody tr[aria-selected='true'] td.spine { box-shadow: inset 2px 0 0 var(--acc); }
+.tbl tbody tr[data-preview='true'] td { background: rgba(232, 93, 111, 0.08); }
+.tbl tbody tr[data-preview='true'] td.spine { box-shadow: inset 2px 0 0 var(--err); }
 /* Reference tables inside the panel: read, not clicked. */
 .tbl.dense td { height: 28px; }
 .tbl.dense tbody tr { cursor: default; }
@@ -312,6 +325,47 @@ a.kpi:hover { border-color: var(--line2); }
 }
 .stabs button:hover { color: var(--tx); }
 .stabs button.on { color: var(--tx); border-bottom-color: var(--acc); font-weight: 500; }
+
+.inv { flex: 1; min-height: 0; overflow: auto; padding: 16px 20px 28px; }
+.inv-join { width: 1px; height: 12px; margin-left: 17px; background: var(--line2); }
+.inv-stage { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px 12px; }
+.inv-stage.active { border-color: var(--acc); }
+.inv-stage.empty { border-color: var(--warn); }
+.inv-stage.pending { color: var(--tx3); }
+.inv-head {
+  display: flex; gap: 8px; align-items: baseline; width: 100%;
+  background: none; border: 0; padding: 0; color: inherit; cursor: pointer; text-align: left;
+}
+.inv-mark { width: 1.1em; flex: none; font-family: var(--mono); }
+.inv-stage.complete .inv-mark, .inv-lane.complete .inv-mark { color: var(--ok); }
+.inv-stage.active .inv-mark, .inv-lane.active .inv-mark { color: var(--acc); }
+.inv-stage.empty .inv-mark, .inv-lane.empty .inv-mark { color: var(--warn); }
+.inv-label { font-size: 12px; letter-spacing: 0.06em; font-weight: 600; }
+.inv-meaning { font-weight: 500; }
+.inv-q, .inv-support { margin: 3px 0 0 26px; font-size: 12px; color: var(--tx3); }
+.inv-support { color: var(--tx2); }
+.inv-fan {
+  list-style: none; margin: 10px 0 0 26px; padding: 0 0 0 12px;
+  border-left: 2px solid var(--line2); display: flex; flex-direction: column; gap: 6px;
+}
+.inv-lane { border-radius: 6px; padding: 6px 8px; border: 1px solid transparent; }
+.inv-lane.active {
+  background: color-mix(in srgb, var(--acc) 16%, transparent);
+  border-color: var(--acc);
+}
+.inv-lane.pending { opacity: 0.5; }
+.inv-lane-main {
+  display: flex; gap: 8px; align-items: baseline; width: 100%;
+  background: none; border: 0; padding: 0; color: inherit; cursor: pointer; text-align: left;
+}
+.inv-lane-name { font-weight: 600; min-width: 12em; }
+.inv-lane-short { color: var(--tx2); font-size: 13px; }
+.inv-raw-toggle {
+  margin: 2px 0 0 26px; background: none; border: 0; padding: 0;
+  color: var(--tx3); font-size: 11px; cursor: pointer;
+}
+.inv-raw { margin: 4px 0 0 26px; font-family: var(--mono); font-size: 12px; color: var(--tx2); }
+
 .sbody { flex: 1; min-height: 0; display: flex; }
 /* Shares the panel instead of holding 460px of it. Span names are the longest strings in
    the product -- temporal:clicks:campaign_type|device_model -- and they were ellipsed at a
@@ -802,3 +856,42 @@ html { scrollbar-color: var(--scroll) transparent; }
   background: var(--panel2); border: 1px solid var(--line);
   font: 500 9px/1 var(--mono); color: var(--tx3);
 }
+
+/* ---------- Time Machine ---------- */
+.modeseg {
+  display: inline-flex; gap: 2px; padding: 2px; border-radius: 8px;
+  background: var(--panel2); border: 1px solid var(--line); flex: none;
+}
+.modeseg button {
+  height: 24px; padding: 0 10px; border: 0; border-radius: 6px;
+  background: transparent; color: var(--tx2); font: 600 11px/1 var(--sans);
+  cursor: pointer;
+}
+.modeseg button.on { background: var(--acc); color: #fff; }
+.modeseg button:hover:not(.on) { color: var(--tx); }
+
+.tmbar {
+  margin-bottom: 12px; padding: 12px 14px; border-radius: 10px;
+  background: var(--panel); border: 1px solid var(--line);
+}
+.tmrow { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
+.tmleft { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; min-width: 0; }
+.tmtag {
+  font: 600 10px/1 var(--sans); letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--acc2);
+}
+.tmdataset { font: 600 12px/1.2 var(--sans); color: var(--tx); }
+.tmcontrols { display: flex; align-items: center; gap: 4px; margin-left: auto; flex-wrap: wrap; }
+.tmsep { width: 1px; height: 16px; background: var(--line2); margin: 0 4px; }
+.tmscrub { display: flex; align-items: center; gap: 10px; }
+.tmstamp { flex: none; min-width: 72px; font-size: 11px; }
+.tmstamp:last-of-type { text-align: right; }
+.tmslider {
+  flex: 1; height: 6px; appearance: none; border-radius: 999px;
+  background: var(--panel3); outline: none; cursor: pointer;
+}
+.tmslider::-webkit-slider-thumb {
+  appearance: none; width: 14px; height: 14px; border-radius: 50%;
+  background: var(--acc); border: 2px solid var(--bg); box-shadow: 0 0 0 1px var(--acc);
+}
+.tmnote { margin-top: 8px; font-size: 11px; color: var(--tx2); line-height: 1.45; }

@@ -1,0 +1,30 @@
+# Dev console: `next dev` with the host `web/` tree bind-mounted.
+# Production images stay on Dockerfile + `node server.js`.
+
+FROM node:24-alpine
+WORKDIR /app
+
+COPY package.json certs*/ /tmp/ca/
+RUN if ls /tmp/ca/*.crt >/dev/null 2>&1; then \
+      cat /tmp/ca/*.crt > /usr/local/share/extra-ca.crt && \
+      echo "trusting $(grep -c 'BEGIN CERTIFICATE' /usr/local/share/extra-ca.crt) extra CA certificate(s)"; \
+    else \
+      cp /etc/ssl/certs/ca-certificates.crt /usr/local/share/extra-ca.crt 2>/dev/null || \
+      cp /etc/ssl/cert.pem /usr/local/share/extra-ca.crt; \
+    fi
+ENV NODE_EXTRA_CA_CERTS=/usr/local/share/extra-ca.crt
+
+COPY package.json package-lock.json* ./
+RUN --mount=type=cache,target=/root/.npm \
+    if [ -f package-lock.json ]; then npm ci --no-audit --no-fund --ignore-scripts; \
+    else npm install --no-audit --no-fund --ignore-scripts; fi
+
+EXPOSE 3000
+ENV NEXT_TELEMETRY_DISABLED=1 HOSTNAME=0.0.0.0 PORT=3000
+# Docker Desktop on macOS often misses inotify; polling is slower but actually reloads.
+ENV WATCHPACK_POLLING=true CHOKIDAR_USEPOLLING=true
+
+HEALTHCHECK --interval=15s --timeout=5s --start-period=60s --retries=8 \
+  CMD wget -qO- http://127.0.0.1:3000/ >/dev/null 2>&1 || exit 1
+
+CMD ["sh", "scripts/dev-entrypoint.sh"]

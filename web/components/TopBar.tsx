@@ -15,12 +15,18 @@ export function TopBar({
   windowStart,
   windowEnd,
   grain,
+  mode = 'live',
+  onModeLive,
+  onModeTimeMachine,
 }: {
   health: Health[];
   run: Run | null;
   windowStart: string;
   windowEnd: string;
   grain: Grain;
+  mode?: 'live' | 'timemachine';
+  onModeLive?: () => void;
+  onModeTimeMachine?: () => void;
 }) {
   return (
     <div className="top">
@@ -29,6 +35,25 @@ export function TopBar({
         Verdict
       </span>
       <span className="vr" />
+      {onModeLive && onModeTimeMachine && (
+        <>
+          <div className="modeseg" role="group" aria-label="Console mode">
+            <button type="button" className={mode === 'live' ? 'on' : ''} aria-pressed={mode === 'live'} onClick={onModeLive}>
+              Live
+            </button>
+            <button
+              type="button"
+              className={mode === 'timemachine' ? 'on' : ''}
+              aria-pressed={mode === 'timemachine'}
+              onClick={onModeTimeMachine}
+              title="Deterministic replay of a completed investigation"
+            >
+              Time Machine
+            </button>
+          </div>
+          <span className="vr" />
+        </>
+      )}
       <span className="mono dim2" style={{ fontSize: 11 }}>
         inmobi | glance
       </span>

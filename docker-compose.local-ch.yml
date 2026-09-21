@@ -1,0 +1,79 @@
+# Local ClickHouse for booth / offline demos.
+# Merged by ./start.sh and ./stack.sh when CLICKHOUSE_LOCAL=true (default).
+#
+# Host:     localhost:${CLICKHOUSE_PORT:-18123}  (HTTP)
+# Compose:  clickhouse:8123
+#
+#   docker compose -f docker-compose.yml -f docker-compose.local-ch.yml up -d clickhouse
+
+services:
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8
+    container_name: verdict-clickhouse
+    restart: unless-stopped
+    ports:
+      - "${CLICKHOUSE_PORT:-18123}:8123"
+      - "${CLICKHOUSE_NATIVE_PORT:-19123}:9000"
+    environment:
+      CLICKHOUSE_DB: ${CLICKHOUSE_DATABASE:-verdict}
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-default}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    volumes:
+      - clickhouse_local_data:/var/lib/clickhouse
+      - ./deploy/clickhouse/users.d/default-network.xml:/etc/clickhouse-server/users.d/default-network.xml:ro
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8123/ping || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 20s
+
+  # Containers on the Compose network talk to the service name, not localhost.
+  web:
+    environment:
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_PORT: "8123"
+      CLICKHOUSE_SECURE: "false"
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-default}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
+      CLICKHOUSE_DATABASE: ${CLICKHOUSE_DATABASE:-verdict}
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+
+  verdict:
+    environment:
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_PORT: "8123"
+      CLICKHOUSE_SECURE: "false"
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-default}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
+      CLICKHOUSE_DATABASE: ${CLICKHOUSE_DATABASE:-verdict}
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+
+  mcp-clickhouse:
+    environment:
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_PORT: "8123"
+      CLICKHOUSE_SECURE: "false"
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-default}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
+      CLICKHOUSE_DATABASE: ${CLICKHOUSE_DATABASE:-verdict}
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+
+  otel-collector:
+    environment:
+      CLICKHOUSE_ENDPOINT: http://clickhouse:8123
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-default}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
+
+volumes:
+  clickhouse_local_data:

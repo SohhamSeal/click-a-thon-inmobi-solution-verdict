@@ -210,3 +210,13 @@ export interface Point {
   baseline_weeks_seen: number;
   baseline_weeks_used: number;
 }
+
+/** Parent-series chart shape (also embedded in Time Machine fixtures). */
+export interface Series {
+  metric: Metric;
+  label: string;
+  points: Point[];
+  from: number;
+  to: number;
+  effect: number;
+}

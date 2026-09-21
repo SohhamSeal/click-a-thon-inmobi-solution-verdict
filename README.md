@@ -78,6 +78,17 @@ from an earlier AI-enabled run.
 | MCP server | <http://localhost:8001/sse> | the SQL tool, on its own, for any MCP client |
 | HyperDX | hosted, with ClickHouse Cloud | every investigation as a distributed trace |
 
+### The four named OSS integrations
+
+What the demo actually uses. Full write-up: [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md).
+
+| Integration | What you actually use it for |
+|---|---|
+| **ClickHouse** | Primary datastore *and* analytical engine: events, lattice rollups, dictionaries, cases, evidence, coverage. Detectors run against these tables. |
+| **ClickStack** | OTel collector writes investigation spans into the same ClickHouse; HyperDX is the waterfall UI. Console Trace tab reads `case_steps` even if HyperDX is down. |
+| **Langfuse** | **Not used.** LLM narration is verified against computed numbers (`--no-llm` leaves every verdict identical). No Langfuse container or keys. |
+| **LibreChat** | Verdict.AI: follow-up chat with one tool, the official ClickHouse MCP server, on the same rollups. It does not decide root cause. |
+
 Ports are overridable — `WEB_PORT`, `LIBRECHAT_PORT`, `MCP_PORT`, `HYPERDX_UI_PORT`, and
 `CURSOR_AGENT_PORT` (only in AI mode).
 

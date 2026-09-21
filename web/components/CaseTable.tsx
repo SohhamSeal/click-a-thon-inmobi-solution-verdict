@@ -72,15 +72,23 @@ const COLS: { w: number; r?: boolean }[] = [
 export function CaseTable({
   cases,
   openId,
+  highlightId,
   sort,
   onSort,
   onOpen,
+  onHover,
+  /** Time Machine presentation status. Absent in Live — table uses stored verdict_kind. */
+  uiStatusById,
 }: {
   cases: Case[];
   openId: string | null;
+  /** Graph hover preview — highlight without opening the drawer. */
+  highlightId?: string | null;
   sort: Sort;
   onSort: (s: Sort) => void;
   onOpen: (id: string) => void;
+  onHover?: (id: string | null) => void;
+  uiStatusById?: Map<string, 'investigating' | 'verdict'>;
 }) {
   const Th = ({ label, k, r }: { label: string; k?: Sort; r?: boolean }) => (
     <th className={r ? 'r' : undefined} aria-sort={k === sort ? 'ascending' : undefined} title={HINT[label]}>
@@ -131,7 +139,10 @@ export function CaseTable({
                 key={c.case_id}
                 tabIndex={0}
                 aria-selected={c.case_id === openId}
+                data-preview={c.case_id === highlightId && c.case_id !== openId ? 'true' : undefined}
                 onClick={() => onOpen(c.case_id)}
+                onMouseEnter={() => onHover?.(c.case_id)}
+                onMouseLeave={() => onHover?.(null)}
                 onKeyDown={e => {
                   if (e.key === 'Enter' || e.key === ' ') {
                     e.preventDefault();
@@ -147,7 +158,13 @@ export function CaseTable({
                 <td className={`r num ${c.direction}`}>{pct(c.relative_effect)}</td>
                 <td>{named ? <Segment label={c.segment} max={2} /> : <span className="dim2">—</span>}</td>
                 <td>
-                  <span className={KIND_BADGE[c.verdict_kind]}>{KIND_LABEL[c.verdict_kind]}</span>
+                  {uiStatusById?.get(c.case_id) === 'investigating' ? (
+                    <span className="badge q" title="Presentation state while recorded steps are still revealing">
+                      Investigating
+                    </span>
+                  ) : (
+                    <span className={KIND_BADGE[c.verdict_kind]}>{KIND_LABEL[c.verdict_kind]}</span>
+                  )}
                 </td>
                 <td className="m r">{metricValue(c.metric, c.observed)}</td>
                 <td className="m r dim2">{metricValue(c.metric, c.expected)}</td>

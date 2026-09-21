@@ -7,6 +7,7 @@ import { Narrative } from './Narrative';
 import { usePanelWidth } from './usePanelWidth';
 import { Recommendations } from './Recommendations';
 import { Waterfall } from './Waterfall';
+import { Investigation } from './Investigation';
 import { Segment } from './Segment';
 import { flatten } from '@/lib/data';
 import { traceUrl } from '@/lib/links';
@@ -139,6 +140,8 @@ export function CasePanel({
   recsEnabled,
   recsBusy,
   onGenerate,
+  /** Time Machine: presentation status while steps are still revealing. */
+  uiStatus,
 }: {
   c: Case;
   onClose: () => void;
@@ -146,10 +149,11 @@ export function CasePanel({
   recsEnabled: boolean;
   recsBusy: boolean;
   onGenerate: (force: boolean) => void;
+  uiStatus?: 'investigating' | 'verdict';
 }) {
   const root = c.trace;
   const nodes = useMemo(() => (root ? flatten(root) : []), [root]);
-  const [tab, setTab] = useState<'trace' | 'evidence' | 'narrative' | 'actions'>('trace');
+  const [tab, setTab] = useState<'investigation' | 'trace' | 'evidence' | 'narrative' | 'actions'>('investigation');
   // Opens on the localizer rather than the root: the root's detail is a restatement
   // of the header, so landing there wastes the first look at the panel. Keyed on step_id
   // rather than span_id, which is empty whenever tracing is switched off.
@@ -172,8 +176,13 @@ export function CasePanel({
   // Actions appears only when the toggle is on, so the panel keeps its shape for anyone who
   // never turns model-written advice on at all.
   const tabs = (recsEnabled
-    ? (['trace', 'evidence', 'narrative', 'actions'] as const)
-    : (['trace', 'evidence', 'narrative'] as const)) as readonly typeof tab[];
+    ? (['investigation', 'trace', 'evidence', 'narrative', 'actions'] as const)
+    : (['investigation', 'trace', 'evidence', 'narrative'] as const)) as readonly typeof tab[];
+
+  const openFromInvestigation = (next: 'trace' | 'evidence', stepId?: string) => {
+    if (stepId) setSel(stepId);
+    setTab(next);
+  };
 
   useEffect(() => {
     if (!recsEnabled && tab === 'actions') setTab('trace');
@@ -220,7 +229,11 @@ export function CasePanel({
                   ·
                 </span>
                 <Segment label={c.segment} />
-                <span className={KIND_BADGE[c.verdict_kind]}>{KIND_LABEL[c.verdict_kind]}</span>
+                {uiStatus === 'investigating' ? (
+                  <span className="badge q">Investigating</span>
+                ) : (
+                  <span className={KIND_BADGE[c.verdict_kind]}>{KIND_LABEL[c.verdict_kind]}</span>
+                )}
                 {c.recurrence_of && <span className="badge w">recurrence</span>}
               </h2>
               <div className="pills">
@@ -260,7 +273,9 @@ export function CasePanel({
                 className={`${tab === t ? 'on' : ''}${t === 'actions' ? ' accent' : ''}`}
                 onClick={() => setTab(t)}
               >
-                {t === 'trace'
+                {t === 'investigation'
+                  ? 'Investigation'
+                  : t === 'trace'
                   ? `Trace ${nodes.length}`
                   : t === 'evidence'
                     ? `Evidence ${c.candidates.length}`
@@ -271,6 +286,12 @@ export function CasePanel({
             ))}
           </div>
         </div>
+
+        {tab === 'investigation' && (
+          <div className="sbody one">
+            <Investigation c={c} steps={nodes} onOpen={openFromInvestigation} />
+          </div>
+        )}
 
         {tab === 'trace' && !root && <NoTrace />}
 

@@ -1,0 +1,28 @@
+# Overlay for `./start.sh` / `./stack.sh up --dev`.
+# Replaces the production Next standalone server with `next dev` and bind-mounts ./web
+# so a save on the host is picked up without rebuilding the image.
+
+services:
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile.dev
+    image: verdict-web-dev:${VERDICT_TAG:-local}
+    environment:
+      NODE_ENV: development
+      WATCHPACK_POLLING: "true"
+      CHOKIDAR_USEPOLLING: "true"
+    volumes:
+      - ./web:/app
+      - web-dev-node-modules:/app/node_modules
+      - web-dev-next:/app/.next
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/ >/dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 90s
+
+volumes:
+  web-dev-node-modules:
+  web-dev-next:
