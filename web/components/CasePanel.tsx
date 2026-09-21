@@ -10,9 +10,11 @@ import { Waterfall } from './Waterfall';
 import { Investigation } from './Investigation';
 import { Segment } from './Segment';
 import { flatten } from '@/lib/data';
+import { findParentAnomaly } from '@/lib/anomalies';
+import { timingDisplay, type OnsetResult } from '@/lib/onset';
 import { traceUrl } from '@/lib/links';
 import { ARROW, clearedOf, impact, KIND_BADGE, KIND_LABEL, metricValue, money, ms, pct } from '@/lib/format';
-import type { Candidate, Case, RecommendationSet, Step } from '@/lib/types';
+import type { Candidate, Case, RecommendationSet, Series, Step } from '@/lib/types';
 
 const STATUS_BADGE: Record<Candidate['status'], string> = {
   accused: 'badge a',
@@ -133,6 +135,49 @@ function NoTrace() {
   );
 }
 
+function TimingStrip({ c, series }: { c: Case; series?: Series[] }) {
+  const onset: OnsetResult | null = c.onset
+    ? {
+        status: c.onset.status,
+        at: c.onset.at,
+        k: c.onset.k,
+        grain: c.onset.grain,
+        hours: [],
+      }
+    : null;
+  const peak = series?.length
+    ? findParentAnomaly(series, c.metric, c.window_start, c.window_end)?.t ?? null
+    : null;
+  const d = timingDisplay(c.verdict_kind, onset, peak);
+  const stripClass = d.weak ? 'timing-strip weak' : 'timing-strip';
+
+  return (
+    <div
+      className={stripClass}
+      title="Onset = sustained accused-segment change. Peak = parent-series anomaly observation. Investigation timing is on the Trace timeline."
+    >
+      <span className="ts-label">Timing</span>
+      <span className="ts-clock">
+        <span className="ts-name">Onset</span>
+        <span className={`ts-val${d.established ? '' : ' phrase'}`}>
+          {d.onsetValue}
+        </span>
+        {d.weak ? <span className="ts-hint">· weak</span> : null}
+      </span>
+      {d.established && d.peakStamp ? (
+        <>
+          <span className="ts-sep">·</span>
+          <span className="ts-clock">
+            <span className="ts-name">Peak</span>
+            <span className="ts-val soft">{d.peakStamp}</span>
+          </span>
+        </>
+      ) : null}
+      {!d.established && d.onsetDetail ? <div className="ts-detail">{d.onsetDetail}</div> : null}
+    </div>
+  );
+}
+
 export function CasePanel({
   c,
   onClose,
@@ -142,6 +187,8 @@ export function CasePanel({
   onGenerate,
   /** Time Machine: presentation status while steps are still revealing. */
   uiStatus,
+  /** Parent series for Peak marker clock (same source as the chart). */
+  series,
 }: {
   c: Case;
   onClose: () => void;
@@ -150,6 +197,7 @@ export function CasePanel({
   recsBusy: boolean;
   onGenerate: (force: boolean) => void;
   uiStatus?: 'investigating' | 'verdict';
+  series?: Series[];
 }) {
   const root = c.trace;
   const nodes = useMemo(() => (root ? flatten(root) : []), [root]);
@@ -260,6 +308,7 @@ export function CasePanel({
                   )}
                 </span>
               </div>
+              <TimingStrip c={c} series={series} />
             </div>
             <button className="btn sm sp" onClick={onClose} title="Close (Esc)" style={{ display: 'inline-flex' }}>
               <CloseIcon />
@@ -674,10 +723,11 @@ export function CasePanel({
                 ) : (
                   <div className="recs">
                     <p className="recsum dim">
-                      No advice has been generated for this case yet.
+                      No advice yet for this case. Turn on AI Recommendations to generate the run,
+                      or start just this case here.
                     </p>
-                    <button className="btn sm" onClick={() => onGenerate(false)}>
-                      Generate
+                    <button className="btn sm" onClick={() => onGenerate(false)} disabled={recsBusy}>
+                      Generate for this case
                     </button>
                   </div>
                 )}

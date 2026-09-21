@@ -147,6 +147,7 @@ services:
       RECOMMEND_URL: ${RECOMMEND_URL:-http://cursor-cli-agent:8157}
       RECOMMEND_API_TOKEN: ${CURSOR_SERVICE_API_TOKEN:-}
       RECOMMEND_TIMEOUT_MS: ${RECOMMEND_TIMEOUT_MS:-360000}
+      RECOMMEND_PARALLELISM: ${RECOMMEND_PARALLELISM:-8}
     # Deliberately no host.docker.internal mapping. Docker Desktop already resolves that name to
     # the address the host is reachable on, and pinning it to host-gateway replaces that with the
     # VM's own bridge, which points back into the VM rather than at the host, so anything bound on
@@ -172,12 +173,12 @@ services:
     environment:
       CURSOR_API_KEY: ${CURSOR_API_KEY:-}
       CURSOR_SERVICE_API_TOKEN: ${CURSOR_SERVICE_API_TOKEN:-}
-      CURSOR_MODEL: ${CURSOR_MODEL:-cursor-grok-4.5-high-fast}
+      CURSOR_MODEL: ${CURSOR_MODEL:-gpt-5.6-luna-high}
       CURSOR_DEFAULT_MODEL: ${CURSOR_DEFAULT_MODEL:-}
-      CURSOR_REMEDIATION_MODEL: ${CURSOR_REMEDIATION_MODEL:-}
-      CURSOR_VALIDATION_MODEL: ${CURSOR_VALIDATION_MODEL:-}
+      CURSOR_REMEDIATION_MODEL: ${CURSOR_REMEDIATION_MODEL:-gpt-5.6-luna-high}
+      CURSOR_VALIDATION_MODEL: ${CURSOR_VALIDATION_MODEL:-gpt-5.6-luna-high}
       CURSOR_AGENT_ENDPOINT: ${CURSOR_AGENT_ENDPOINT:-}
-      CURSOR_MAX_CONCURRENCY: ${CURSOR_MAX_CONCURRENCY:-4}
+      CURSOR_MAX_CONCURRENCY: ${CURSOR_MAX_CONCURRENCY:-8}
       CURSOR_MAX_PENDING_JOBS: ${CURSOR_MAX_PENDING_JOBS:-20}
       LOG_LEVEL: ${CURSOR_LOG_LEVEL:-INFO}
       HTTP_PROXY: ${HTTP_PROXY:-}

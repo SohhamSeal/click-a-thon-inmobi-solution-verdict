@@ -178,6 +178,16 @@ export interface Case {
   llm_model: string;
   /** Root of the stored span tree. Absent when the case predates step persistence. */
   trace: Step | null;
+  /**
+   * Historical segment onset (sustained band deviation). Always computed for audit when
+   * available; the Timing strip only promotes a timestamp for localized + determined/weak.
+   */
+  onset?: {
+    status: 'determined' | 'weak' | 'undetermined';
+    at: string | null;
+    k: number;
+    grain: Grain;
+  };
 }
 
 export interface Run {
@@ -190,15 +200,6 @@ export interface Run {
   trace_id: string;
   note: string;
   duration_ms: number;
-}
-
-/** A failed self-check. Derived from the run and from Verdict's own accuracy — never
- *  from a case, because anything visible on a case row is not news. */
-export interface Health {
-  level: 'd' | 'w';
-  what: string;
-  detail: string;
-  where: string;
 }
 
 export interface Point {

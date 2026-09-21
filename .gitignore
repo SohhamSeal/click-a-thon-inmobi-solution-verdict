@@ -26,3 +26,7 @@ data/
 # Local trust roots are injected as Docker secrets, never committed.
 services/cursor-cli-agent/certs/*
 !services/cursor-cli-agent/certs/README.md
+
+services/cursor-cli-agent/certs/*.pem
+services/cursor-cli-agent/certs/macos-ca-bundle.pem
+.superpowers/

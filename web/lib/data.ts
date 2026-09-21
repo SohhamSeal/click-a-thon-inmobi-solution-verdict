@@ -1,4 +1,4 @@
-import type { Case, Health, Run, Step, VerdictKind } from './types';
+import type { Case, Step, VerdictKind } from './types';
 
 export const P_THRESHOLD = 0.01;
 
@@ -50,45 +50,4 @@ export function kpiOf(cases: Case[], spans: number, coverageGaps: number): Kpi {
     llmVerified: cases.filter(c => c.narrative_source === 'llm' && c.narrative_verified).length,
     spans,
   };
-}
-
-/** Only two classes of item qualify: the run did not finish clean, and a draft was rejected
- *  by the numeric guard. Anything already visible as a badge on a case row is not an alert --
- *  it is the same fact restated in a second place. */
-export function healthOf(run: Run | null, cases: Case[]): Health[] {
-  const out: Health[] = [];
-
-  if (run && run.status !== 'complete') {
-    out.push({
-      level: run.status === 'partial' ? 'd' : 'w',
-      what: `run ${run.run_id.slice(0, 8)} ${run.status}`,
-      detail: run.note || 'no detail recorded',
-      where: 'Runs',
-    });
-  }
-
-  const rejected = cases.filter(c => c.unsupported.length > 0);
-  if (rejected.length) {
-    out.push({
-      level: 'w',
-      what: `${rejected.length} draft${rejected.length > 1 ? 's' : ''} rejected by the numeric guard`,
-      detail: rejected
-        .slice(0, 3)
-        .map(c => `${c.metric} · ${c.unsupported.join(', ')}`)
-        .join(' · '),
-      where: 'Narrative',
-    });
-  }
-
-  const borrowed = cases.filter(c => c.confidence_json.some(k => !k.scored && k.name === 'significance'));
-  if (borrowed.length) {
-    out.push({
-      level: 'w',
-      what: `${borrowed.length} case${borrowed.length > 1 ? 's' : ''} with significance unscored`,
-      detail: 'evidence measured on a different cell than the one accused, so it was withheld',
-      where: 'Evidence',
-    });
-  }
-
-  return out;
 }

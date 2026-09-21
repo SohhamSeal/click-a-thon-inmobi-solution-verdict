@@ -1,6 +1,7 @@
 import 'server-only';
 
 import { iso, rows } from './clickhouse';
+import { computeOnset } from './onset';
 import type {
   Candidate,
   Case,
@@ -736,6 +737,118 @@ export async function getSeries(metric: Metric, startIso: string, endIso: string
   return { metric, label: METRIC_LABEL[metric], points, from: fromIdx, to: toIdx, effect };
 }
 
+const ROLLUP_TABLE: Record<Grain, string> = {
+  '5m': 'rollup_5m',
+  '1h': 'rollup_1h',
+  '1d': 'rollup_1d',
+};
+
+const GRAIN_MS: Record<Grain, number> = {
+  '5m': 5 * 60_000,
+  '1h': HOUR_MS,
+  '1d': 24 * HOUR_MS,
+};
+
+function segmentKeys(segmentJson: Record<string, string>): { combo: string; key_a: string; key_b: string } {
+  const ordered = Object.entries(segmentJson).sort(([a], [b]) => a.localeCompare(b));
+  if (!ordered.length) return { combo: '__all__', key_a: '', key_b: '' };
+  if (ordered.length === 1) {
+    return { combo: ordered[0][0], key_a: ordered[0][1], key_b: '' };
+  }
+  return {
+    combo: ordered.map(([d]) => d).join('|'),
+    key_a: ordered[0][1],
+    key_b: ordered[1][1],
+  };
+}
+
+/** Accused-segment series with the same baseline band geometry as parent `getSeries`. */
+export async function getSegmentSeries(
+  metric: Metric,
+  segmentJson: Record<string, string>,
+  startIso: string,
+  endIso: string,
+  grain: Grain,
+): Promise<Point[]> {
+  const start = Date.parse(startIso);
+  const end = Date.parse(endIso);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return [];
+
+  const step = GRAIN_MS[grain] ?? HOUR_MS;
+  const table = ROLLUP_TABLE[grain] ?? 'rollup_1h';
+  const { combo, key_a, key_b } = segmentKeys(segmentJson);
+
+  const from = new Date(start - WEEKS * WEEK_MS).toISOString().slice(0, 19).replace('T', ' ');
+  const to = new Date(end).toISOString().slice(0, 19).replace('T', ' ');
+
+  const raw = await rows<BucketRow>(
+    `SELECT toString(bucket) AS ts,
+            sum(requests) AS requests, sum(fills) AS fills, sum(impressions) AS impressions,
+            sum(clicks) AS clicks, sum(revenue) AS revenue
+     FROM ${table}
+     WHERE combo = {combo:String}
+       AND key_a = {key_a:String}
+       AND key_b = {key_b:String}
+       AND bucket >= parseDateTimeBestEffort({from:String})
+       AND bucket <  parseDateTimeBestEffort({to:String})
+     GROUP BY bucket ORDER BY bucket`,
+    { combo, key_a, key_b, from, to },
+  );
+  if (!raw.length) return [];
+
+  const byTime = new Map<number, Counters>();
+  for (const r of raw) byTime.set(Date.parse(iso(r.ts)), r);
+
+  const totals = Array.from({ length: WEEKS }, emptyCounters);
+  const weekSeen = Array.from({ length: WEEKS }, () => false);
+  for (let t = start; t < end; t += step) {
+    for (let w = 1; w <= WEEKS; w++) {
+      const counters = byTime.get(t - w * WEEK_MS);
+      if (!counters) continue;
+      totals[w - 1] = addCounters(totals[w - 1], counters);
+      weekSeen[w - 1] = true;
+    }
+  }
+  const totalHistory = totals
+    .map((counters, week) => ({ counters, week }))
+    .filter(s => weekSeen[s.week]);
+  const drop = droppedWeek(metric, totalHistory);
+
+  const points: Point[] = [];
+  for (let t = start; t < end; t += step) {
+    const observed = valueOf(metric, byTime.get(t));
+    if (observed === null) continue;
+    const history: BaselineSample[] = [];
+    for (let w = 1; w <= WEEKS; w++) {
+      const counters = byTime.get(t - w * WEEK_MS);
+      if (counters) history.push({ counters, week: w - 1 });
+    }
+    const baseline = baselineOf(metric, history, drop);
+    const expected = baseline?.expected ?? observed;
+    points.push({
+      t: new Date(t).toISOString(),
+      observed,
+      expected,
+      lo: baseline?.lo ?? expected,
+      hi: baseline?.hi ?? expected,
+      baseline_weeks_seen: baseline?.seen ?? 0,
+      baseline_weeks_used: baseline?.used ?? 0,
+    });
+  }
+  return points;
+}
+
+export async function onsetForCase(c: Case): Promise<Case['onset']> {
+  const points = await getSegmentSeries(c.metric, c.segment_json, c.window_start, c.window_end, c.grain);
+  const result = computeOnset(points, c.direction, c.grain);
+  return {
+    status: result.status,
+    at: result.at,
+    k: result.k,
+    grain: result.grain,
+  };
+}
+
 // ---------------------------------------------------------------- dashboard
 
 export interface Dashboard {
@@ -764,7 +877,17 @@ export async function getDashboard(runId?: string): Promise<Dashboard> {
   if (!run) return { run: null, runs: runList, cases: [], series: [], spans: 0, coverageGaps: 0, empty: true };
 
   const caseData = await loadCases(run.run_id);
-  const cases = caseData.cases;
+  const withOnset = await Promise.all(
+    caseData.cases.map(async c => {
+      try {
+        const onset = await onsetForCase(c);
+        return { ...c, onset };
+      } catch {
+        return c;
+      }
+    }),
+  );
+  const cases = withOnset;
   const window = cases[0];
 
   const chartMetrics = [

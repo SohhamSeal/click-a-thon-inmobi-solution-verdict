@@ -75,7 +75,7 @@ function verdictMeaning(kind: VerdictKind): { state: 'complete' | 'empty'; meani
     case 'localized':
       return { state: 'complete', meaning: 'LOCALIZED' };
     case 'unlocalized':
-      return { state: 'empty', meaning: 'No publishable accusation' };
+      return { state: 'empty', meaning: 'UNLOCALIZED' };
     case 'undecomposed':
       return { state: 'empty', meaning: 'Undecomposed' };
     case 'no_data':
@@ -128,7 +128,7 @@ export function deriveInvestigation(steps: Step[], c: Case): InvStage[] {
             case 'localized':
               return { empty: false as const, meaning: humanSegment(c.segment) };
             case 'unlocalized':
-              return { empty: true as const, meaning: 'No defensible candidate' };
+              return { empty: true as const, meaning: 'Could not isolate' };
             case 'undecomposed':
               return { empty: true as const, meaning: 'Undecomposed' };
             case 'no_data':

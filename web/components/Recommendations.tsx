@@ -23,13 +23,25 @@ export function Recommendations({ set, onRegenerate, busy }: {
   if (set.status === 'failed') {
     return (
       <div className="recs">
-        <div className="guard">
-          <b>could not generate advice</b>
-          <span>{set.error || 'the remediation service did not return a result'}</span>
-        </div>
-        <button className="btn sm" onClick={onRegenerate} disabled={busy} style={{ marginTop: 12 }}>
-          {busy ? 'retrying…' : 'Try again'}
-        </button>
+        {busy ? (
+          <div className="recwait">
+            <span className="spin" />
+            <div>
+              <b>Retrying…</b>
+              <span>Drafting again, then an independent review pass. Usually under two minutes.</span>
+            </div>
+          </div>
+        ) : (
+          <>
+            <div className="guard">
+              <b>Could not generate advice</b>
+              <span>{set.error || 'The remediation service did not return a result.'}</span>
+            </div>
+            <button className="btn sm" onClick={onRegenerate} style={{ marginTop: 12 }}>
+              Try again
+            </button>
+          </>
+        )}
       </div>
     );
   }

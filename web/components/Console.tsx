@@ -9,7 +9,7 @@ import { SearchIcon } from './icons';
 import { TimeMachineBar } from './TimeMachineBar';
 import { TopBar } from './TopBar';
 import { markersFromCases } from '@/lib/anomalies';
-import { healthOf, KINDS, kpiOf } from '@/lib/data';
+import { KINDS, kpiOf } from '@/lib/data';
 import { KIND_FILL, KIND_LABEL, money, priority } from '@/lib/format';
 import { boothFixture, useReplay } from '@/lib/timemachine';
 import type { Case, RecommendationSet, Run, Series, VerdictKind } from '@/lib/types';
@@ -44,6 +44,8 @@ interface Props {
   spans: number;
   coverageGaps: number;
   recommendationsEnabled: boolean;
+  /** Max concurrent case recommendation jobs when the AI toggle is on (default 8). */
+  recommendParallelism?: number;
   ingestEnabled: boolean;
   empty: boolean;
 }
@@ -108,6 +110,7 @@ export function Console({
   spans: liveSpans,
   coverageGaps: liveCoverageGaps,
   recommendationsEnabled,
+  recommendParallelism = 8,
   ingestEnabled,
   empty: liveEmpty,
 }: Props) {
@@ -138,7 +141,6 @@ export function Console({
   const pushed = useRef(false);
 
   const kpi = useMemo(() => kpiOf(cases, spans, coverageGaps), [cases, spans, coverageGaps]);
-  const health = useMemo(() => healthOf(activeRun, cases), [activeRun, cases]);
 
   const graphMarkers = useMemo(() => {
     if (tm) return replay.derived.graphMarkers;
@@ -225,23 +227,70 @@ export function Console({
 
   const [recsOn, setRecsOn] = useState(false);
   const [recs, setRecs] = useState<Map<string, RecommendationSet>>(new Map());
-  const [generating, setGenerating] = useState<string | null>(null);
+  const [generating, setGenerating] = useState<Set<string>>(() => new Set());
   const [pending, setPending] = useState(0);
-  const queued = useRef<string | null>(null);
+  /** When a wave ends while the toggle is still on, bump so leftovers can resume once. */
+  const [batchNonce, setBatchNonce] = useState(0);
+  const inFlight = useRef(new Set<string>());
+  const batchRunId = useRef<string | null>(null);
+  const lastRunId = useRef<string | null>(null);
+  const recsOnRef = useRef(recsOn);
+  recsOnRef.current = recsOn;
 
   const store = (set: RecommendationSet) => setRecs(prev => new Map(prev).set(set.case_id, set));
 
+  const setBusy = (caseId: string, on: boolean) => {
+    setGenerating(prev => {
+      const next = new Set(prev);
+      if (on) next.add(caseId);
+      else next.delete(caseId);
+      return next;
+    });
+  };
+
   async function generateFor(caseId: string, force: boolean) {
     if (!recommendationsEnabled || !activeRun) return;
-    setGenerating(caseId);
+    if (!force && inFlight.current.has(caseId)) return;
+    if (!force) {
+      const existing = recs.get(caseId);
+      if (existing?.status === 'completed') return;
+    }
+
+    inFlight.current.add(caseId);
+    setBusy(caseId, true);
     try {
       const res = await fetch('/api/recommendations', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ run: activeRun.run_id, case_id: caseId, force }),
       });
-      const body = await res.json();
-      if (body.set) store(body.set);
+      let body: { set?: RecommendationSet; error?: string; cached?: boolean } = {};
+      try {
+        body = await res.json();
+      } catch {
+        body = {};
+      }
+      if (body.set) {
+        store(body.set);
+        return;
+      }
+      const message =
+        body.error ||
+        (!res.ok
+          ? `Recommendation request failed (${res.status})`
+          : 'Recommendation service returned no result');
+      store({
+        case_id: caseId,
+        generated_at: new Date().toISOString(),
+        status: 'failed',
+        summary: '',
+        drafted: 0,
+        recommendations: [],
+        generation_model: '',
+        validation_model: '',
+        job_id: '',
+        error: message,
+      });
     } catch (err) {
       store({
         case_id: caseId,
@@ -253,46 +302,83 @@ export function Console({
         generation_model: '',
         validation_model: '',
         job_id: '',
-        error: (err as Error).message,
+        error: (err as Error).message || 'Network error while generating advice',
       });
     } finally {
-      setGenerating(null);
+      inFlight.current.delete(caseId);
+      setBusy(caseId, false);
     }
   }
 
+  const runId = activeRun?.run_id ?? null;
+
   useEffect(() => {
-    if (!recommendationsEnabled || !recsOn || !activeRun) return;
-    if (queued.current === activeRun.run_id) return;
-    queued.current = activeRun.run_id;
+    if (!recommendationsEnabled || !recsOn || !runId) return;
+
+    if (lastRunId.current !== runId) {
+      lastRunId.current = runId;
+      batchRunId.current = null;
+    }
+
+    // Toggle off/on mid-flight must not start a second wave for the same run.
+    if (batchRunId.current === runId) return;
+    batchRunId.current = runId;
 
     let cancelled = false;
+    const limit = Math.max(1, Math.min(32, Math.floor(recommendParallelism) || 8));
+
     (async () => {
       let missing: string[] = [];
       try {
-        const res = await fetch(`/api/recommendations?run=${encodeURIComponent(activeRun.run_id)}`);
-        const body = (await res.json()) as { sets?: Record<string, RecommendationSet>; missing?: string[] };
+        const res = await fetch(`/api/recommendations?run=${encodeURIComponent(runId)}`);
+        const body = (await res.json()) as {
+          sets?: Record<string, RecommendationSet>;
+          missing?: string[];
+          error?: string;
+        };
         if (cancelled) return;
+        if (!res.ok) {
+          console.warn('recommendations GET failed', body.error || res.status);
+          return;
+        }
         if (body.sets) setRecs(new Map(Object.entries(body.sets)));
-        missing = body.missing ?? [];
-      } catch {
+        missing = (body.missing ?? []).filter(id => !inFlight.current.has(id));
+      } catch (err) {
+        console.warn('recommendations GET failed', err);
         return;
       }
 
       setPending(missing.length);
-      for (const caseId of missing) {
-        if (cancelled) return;
-        await generateFor(caseId, false);
-        if (cancelled) return;
-        setPending(n => Math.max(0, n - 1));
+      if (!missing.length) {
+        if (batchRunId.current === runId) batchRunId.current = null;
+        return;
+      }
+
+      let next = 0;
+      const worker = async () => {
+        while (!cancelled) {
+          const i = next++;
+          if (i >= missing.length) return;
+          await generateFor(missing[i], false);
+          if (cancelled) return;
+          setPending(n => Math.max(0, n - 1));
+        }
+      };
+      try {
+        await Promise.all(Array.from({ length: Math.min(limit, missing.length) }, () => worker()));
+      } finally {
+        if (batchRunId.current === runId) batchRunId.current = null;
+        if (!cancelled) setPending(0);
+        // Resume leftovers if the toggle is still on (e.g. after a mid-run abort released ownership).
+        if (recsOnRef.current) setBatchNonce(n => n + 1);
       }
     })();
 
     return () => {
       cancelled = true;
-      queued.current = null;
       setPending(0);
     };
-  }, [recommendationsEnabled, recsOn, activeRun]);
+  }, [recommendationsEnabled, recsOn, runId, recommendParallelism, batchNonce]);
 
   const recsReady = useMemo(
     () => [...recs.values()].filter(s => s.status === 'completed').length,
@@ -327,23 +413,7 @@ export function Console({
 
   return (
     <div className="app">
-      <TopBar
-        health={health}
-        run={activeRun}
-        windowStart={
-          tm
-            ? boothFixture.timeline.start
-            : (window0?.window_start ?? activeRun?.started_at ?? '')
-        }
-        windowEnd={
-          tm ? boothFixture.timeline.end : (window0?.window_end ?? activeRun?.finished_at ?? '')
-        }
-        grain={window0?.grain ?? '1h'}
-        mode={mode}
-        onModeLive={enterLive}
-        onModeTimeMachine={enterTimeMachine}
-      />
-
+      <TopBar mode={mode} onModeLive={enterLive} onModeTimeMachine={enterTimeMachine} />
       <div className="body">
         <div className="scroll">
           {empty ? (
@@ -573,9 +643,10 @@ export function Console({
           onClose={close}
           recommendations={recs.get(openCase.case_id) ?? null}
           recsEnabled={recommendationsEnabled && recsOn}
-          recsBusy={generating === openCase.case_id}
+          recsBusy={generating.has(openCase.case_id)}
           onGenerate={force => generateFor(openCase.case_id, force)}
           uiStatus={openUiStatus}
+          series={series}
         />
       )}
     </div>

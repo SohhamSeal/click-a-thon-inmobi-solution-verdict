@@ -5,9 +5,9 @@ server:
 
 # These values are passed directly to `agent --model`.
 models:
-  default: cursor-grok-4.5-high-fast
-  remediation: cursor-grok-4.5-high-fast
-  validation: cursor-grok-4.5-high-fast
+  default: gpt-5.6-luna-high
+  remediation: gpt-5.6-luna-high
+  validation: gpt-5.6-luna-high
   allow_request_override: false
   allowed: []
 
