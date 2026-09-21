@@ -21,6 +21,10 @@ export interface InvStage {
   label: string;
   question: string;
   state: StageState;
+  /** One-line status shown inside the stage block. */
+  blurb: string;
+  /** Positive localized outcome — subtle green tint like console badges. */
+  positive?: boolean;
   meaning: string;
   support?: string;
   details: InvDetail[];
@@ -119,20 +123,30 @@ export function deriveInvestigation(steps: Step[], c: Case): InvStage[] {
   const localizeView = !localize
     ? null
     : (() => {
-        switch (c.verdict_kind) {
-          case 'localized':
-            return { state: 'complete' as const, meaning: humanSegment(c.segment) };
-          case 'unlocalized':
-            return { state: 'empty' as const, meaning: 'No defensible candidate' };
-          case 'undecomposed':
-            return { state: 'empty' as const, meaning: 'Undecomposed' };
-          case 'no_data':
-            return { state: 'empty' as const, meaning: 'No data' };
-          default: {
-            const _exhaustive: never = c.verdict_kind;
-            return _exhaustive;
+        const kind = (() => {
+          switch (c.verdict_kind) {
+            case 'localized':
+              return { empty: false as const, meaning: humanSegment(c.segment) };
+            case 'unlocalized':
+              return { empty: true as const, meaning: 'No defensible candidate' };
+            case 'undecomposed':
+              return { empty: true as const, meaning: 'Undecomposed' };
+            case 'no_data':
+              return { empty: true as const, meaning: 'No data' };
+            default: {
+              const _exhaustive: never = c.verdict_kind;
+              return _exhaustive;
+            }
           }
+        })();
+        // Stay active until confidence lands, so Verify is the next frontier.
+        if (!confidence && !kind.empty) {
+          return { state: 'active' as const, meaning: kind.meaning };
         }
+        return {
+          state: (kind.empty ? 'empty' : 'complete') as 'empty' | 'complete',
+          meaning: kind.meaning,
+        };
       })();
   const localizeState: StageState = localizeView?.state ?? 'pending';
 
@@ -142,7 +156,8 @@ export function deriveInvestigation(steps: Step[], c: Case): InvStage[] {
   const verdict = confidence ? verdictMeaning(c.verdict_kind) : null;
 
   const lane = (id: string, label: string, rows: Step[]): InvDetail => {
-    const state: StageState = rows.length === 0 ? 'pending' : investigateDone ? 'complete' : 'active';
+    const state: StageState =
+      rows.length === 0 ? 'pending' : investigateDone ? 'complete' : 'active';
     const n = rows.length;
     const noun = id === 'structural' ? (n === 1 ? 'grid' : 'grids') : 'cells';
     const short =
@@ -175,9 +190,11 @@ export function deriveInvestigation(steps: Step[], c: Case): InvStage[] {
     : [];
 
   const detailsInvestigate: InvDetail[] = [];
-  if (investigateStarted || correct) {
-    if (temporal.length) detailsInvestigate.push(lane('temporal', 'Temporal', temporal));
-    if (structural.length) detailsInvestigate.push(lane('structural', 'Structural', structural));
+  // Always expose the fan structure once detection has begun, so pending/active
+  // lanes stay visible under Investigate instead of appearing only when done.
+  if (detect || investigateStarted || correct) {
+    detailsInvestigate.push(lane('temporal', 'Temporal', temporal));
+    detailsInvestigate.push(lane('structural', 'Structural', structural));
     for (const [prefix, rows] of otherNames) {
       detailsInvestigate.push(lane(prefix, prefix, rows));
     }
@@ -186,11 +203,14 @@ export function deriveInvestigation(steps: Step[], c: Case): InvStage[] {
         id: 'correct',
         label: 'Statistical correction',
         state: 'complete',
-        short: correctShort(correct.what, correct.result),
+        short: correctShort(correct.what, correct.result).replace(
+          'BH correction applied · ',
+          'BH correction · ',
+        ),
         raw: correct.result,
         stepId: correct.step_id,
       });
-    } else if (investigateStarted) {
+    } else {
       detailsInvestigate.push({
         id: 'correct',
         label: 'Statistical correction',
@@ -233,6 +253,8 @@ export function deriveInvestigation(steps: Step[], c: Case): InvStage[] {
       label: 'DETECT',
       question: 'Did something change?',
       state: detectState,
+      blurb:
+        detectState === 'pending' ? 'Not started' : detectState === 'active' ? 'Auditing…' : 'Change detected',
       meaning: detect ? 'Change accepted as a case' : 'Not started',
       details: detailsDetect,
       open: { tab: 'trace', stepId: detect?.step_id ?? audit?.step_id },
@@ -242,6 +264,12 @@ export function deriveInvestigation(steps: Step[], c: Case): InvStage[] {
       label: 'INVESTIGATE',
       question: 'What could explain it?',
       state: investigateState,
+      blurb:
+        investigateState === 'pending'
+          ? 'Not started'
+          : investigateState === 'active'
+            ? 'Testing candidates'
+            : 'Candidates tested',
       meaning:
         investigateState === 'pending'
           ? 'Not started'
@@ -260,6 +288,8 @@ export function deriveInvestigation(steps: Step[], c: Case): InvStage[] {
       label: 'LOCALIZE',
       question: 'Can we isolate the source?',
       state: localizeState,
+      blurb: localizeView?.meaning ?? 'Not started',
+      positive: localizeState === 'complete' && c.verdict_kind === 'localized',
       meaning: localizeView?.meaning ?? 'Not started',
       support: localize && c.candidates.length ? `${c.candidates.length} candidates tested` : undefined,
       details: localizeDetails,
@@ -272,6 +302,7 @@ export function deriveInvestigation(steps: Step[], c: Case): InvStage[] {
       label: 'VERIFY',
       question: 'Is the conclusion supported?',
       state: verifyState,
+      blurb: verify?.meaning ?? 'Not started',
       meaning: verify?.meaning ?? 'Not started',
       support: verify?.support,
       details: verifyDetails,
@@ -282,7 +313,17 @@ export function deriveInvestigation(steps: Step[], c: Case): InvStage[] {
       label: 'VERDICT',
       question: 'What can we conclude?',
       state: verdict?.state ?? 'pending',
+      blurb: verdict?.meaning ?? 'Not started',
+      positive: verdict?.state === 'complete' && c.verdict_kind === 'localized',
       meaning: verdict?.meaning ?? 'Not started',
+      support:
+        !verdict || !confidence
+          ? undefined
+          : c.verdict_kind === 'localized'
+            ? `${humanSegment(c.segment)}\n${verify?.meaning ?? ''}${verify?.support ? ` · ${verify.support}` : ''}`
+            : verify
+              ? `${verify.meaning}${verify.support ? ` · ${verify.support}` : ''}`
+              : undefined,
       details: [],
       open: { tab: 'evidence' },
     },

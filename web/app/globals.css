@@ -326,45 +326,157 @@ a.kpi:hover { border-color: var(--line2); }
 .stabs button:hover { color: var(--tx); }
 .stabs button.on { color: var(--tx); border-bottom-color: var(--acc); font-weight: 500; }
 
-.inv { flex: 1; min-height: 0; overflow: auto; padding: 16px 20px 28px; }
-.inv-join { width: 1px; height: 12px; margin-left: 17px; background: var(--line2); }
-.inv-stage { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px 12px; }
-.inv-stage.active { border-color: var(--acc); }
-.inv-stage.empty { border-color: var(--warn); }
-.inv-stage.pending { color: var(--tx3); }
-.inv-head {
-  display: flex; gap: 8px; align-items: baseline; width: 100%;
-  background: none; border: 0; padding: 0; color: inherit; cursor: pointer; text-align: left;
+/* Investigation map: five compact tinted stage blocks + fork under Investigate.
+   Tokens match console badges (acc/ok/warn) — subtle surfaces, not saturated cards. */
+.inv {
+  flex: 1; min-height: 0; display: flex; flex-direction: column;
+  background: var(--bg); overflow: hidden;
 }
-.inv-mark { width: 1.1em; flex: none; font-family: var(--mono); }
-.inv-stage.complete .inv-mark, .inv-lane.complete .inv-mark { color: var(--ok); }
-.inv-stage.active .inv-mark, .inv-lane.active .inv-mark { color: var(--acc); }
-.inv-stage.empty .inv-mark, .inv-lane.empty .inv-mark { color: var(--warn); }
-.inv-label { font-size: 12px; letter-spacing: 0.06em; font-weight: 600; }
-.inv-meaning { font-weight: 500; }
-.inv-q, .inv-support { margin: 3px 0 0 26px; font-size: 12px; color: var(--tx3); }
-.inv-support { color: var(--tx2); }
+.inv-spine {
+  flex: none; padding: 10px 12px 6px;
+  border-bottom: 1px solid var(--line); background: var(--panel);
+}
+.inv-rail {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 14px minmax(0, 1fr) 14px minmax(0, 1fr) 14px minmax(0, 1fr) 14px minmax(0, 1fr);
+  align-items: start;
+  width: 100%; min-width: 0;
+}
+.inv-edge {
+  height: 36px;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--tx3); font: 11px var(--mono); line-height: 1;
+}
+.inv-block-col {
+  min-width: 0;
+  display: flex; flex-direction: column; align-items: stretch;
+}
+.inv-block {
+  display: flex; flex-direction: column; gap: 2px; align-items: flex-start;
+  width: 100%; min-width: 0; min-height: 36px;
+  padding: 5px 8px;
+  border: 1px solid var(--line); border-radius: 5px;
+  background: var(--panel2); color: var(--tx2);
+  cursor: pointer; text-align: left; font: inherit;
+}
+.inv-block:hover { border-color: var(--line2); background: var(--panel3); color: var(--tx); }
+.inv-block.pending { opacity: 0.55; }
+.inv-block.complete { color: var(--tx2); }
+.inv-block.complete .inv-mark { color: var(--tx3); }
+.inv-block.complete.ok {
+  background: var(--okbg); border-color: var(--okbd); color: var(--oktx);
+}
+.inv-block.complete.ok .inv-mark,
+.inv-block.complete.ok .inv-block-label { color: var(--oktx); }
+.inv-block.complete.ok .inv-block-blurb { color: var(--oktx); opacity: 0.85; }
+.inv-block.active:not(.on) {
+  background: var(--accbg); border-color: var(--accbd); color: var(--tx);
+}
+.inv-block.active .inv-mark { color: var(--acc); }
+.inv-block.active .inv-block-label { color: var(--acc2); }
+.inv-block.empty {
+  background: var(--warnbg); border-color: var(--warnbd); color: var(--warntx);
+}
+.inv-block.empty .inv-mark,
+.inv-block.empty .inv-block-label { color: var(--warn); }
+.inv-block.empty .inv-block-blurb { color: var(--warntx); }
+.inv-block.on {
+  background: var(--accbg); border-color: var(--accbd); color: var(--tx);
+  box-shadow: inset 0 0 0 1px var(--accbd);
+}
+.inv-block.on .inv-block-label { color: var(--acc2); }
+.inv-block.on .inv-mark { color: var(--acc); }
+.inv-block.on .inv-block-blurb { color: var(--tx2); }
+.inv-block-top {
+  display: flex; gap: 5px; align-items: center; min-width: 0; width: 100%;
+}
+.inv-mark { flex: none; font: 11px var(--mono); line-height: 1; }
+.inv-block-label {
+  font: 600 10px var(--mono); letter-spacing: 0.06em;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.inv-block-blurb {
+  display: block; width: 100%; min-width: 0;
+  font: 11px var(--sans); color: var(--tx3); line-height: 1.25;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* Vertical fork under Investigate — stem from the block, then parallel lanes. */
 .inv-fan {
-  list-style: none; margin: 10px 0 0 26px; padding: 0 0 0 12px;
-  border-left: 2px solid var(--line2); display: flex; flex-direction: column; gap: 6px;
+  display: flex; flex-direction: column; align-items: flex-start;
+  margin: 0 0 2px 12px; min-width: 0; max-width: 100%;
 }
-.inv-lane { border-radius: 6px; padding: 6px 8px; border: 1px solid transparent; }
-.inv-lane.active {
-  background: color-mix(in srgb, var(--acc) 16%, transparent);
-  border-color: var(--acc);
+.inv-fan-stem {
+  width: 1px; height: 7px; background: var(--line2); flex: none;
 }
-.inv-lane.pending { opacity: 0.5; }
-.inv-lane-main {
-  display: flex; gap: 8px; align-items: baseline; width: 100%;
-  background: none; border: 0; padding: 0; color: inherit; cursor: pointer; text-align: left;
+.inv-fan-branches {
+  display: flex; flex-direction: column; gap: 0;
+  border-left: 1px solid var(--line2);
+  min-width: 0;
 }
-.inv-lane-name { font-weight: 600; min-width: 12em; }
-.inv-lane-short { color: var(--tx2); font-size: 13px; }
-.inv-raw-toggle {
-  margin: 2px 0 0 26px; background: none; border: 0; padding: 0;
-  color: var(--tx3); font-size: 11px; cursor: pointer;
+.inv-fan-lane {
+  position: relative;
+  display: flex; gap: 6px; align-items: center;
+  height: 18px; padding-left: 12px;
+  font: 11px var(--mono); color: var(--tx3);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: 100%;
 }
-.inv-raw { margin: 4px 0 0 26px; font-family: var(--mono); font-size: 12px; color: var(--tx2); }
+.inv-fan-elbow {
+  position: absolute; left: 0; top: 50%;
+  width: 10px; height: 1px; background: var(--line2);
+}
+.inv-fan-lane.last {
+  border-left: 1px solid transparent;
+  margin-left: -1px; padding-left: 13px;
+}
+.inv-fan-lane.active { color: var(--tx); }
+.inv-fan-lane.active .inv-mark { color: var(--acc); }
+.inv-fan-lane.complete { color: var(--tx2); }
+.inv-fan-lane.complete .inv-mark { color: var(--ok); }
+.inv-fan-lane.pending { opacity: 0.4; }
+.inv-fan-name { overflow: hidden; text-overflow: ellipsis; }
+
+.inv-body { flex: 1; min-height: 0; overflow: auto; background: var(--bg); }
+.inv-nd { padding: 10px 14px 16px; }
+.inv-nd .ndh { margin-bottom: 4px; }
+.inv-nd .inv-state {
+  text-transform: uppercase; letter-spacing: 0.04em;
+  font: 600 11px var(--mono); color: var(--tx3);
+}
+.inv-nd.empty .ndh .k, .inv-nd.empty .inv-state { color: var(--warn); }
+.inv-nd.active .inv-state { color: var(--acc2); }
+.inv-meaning { font: 600 13px var(--sans); color: var(--tx); line-height: 1.3; margin-bottom: 3px; }
+.inv-support { font: 12px var(--sans); color: var(--tx2); line-height: 1.35; margin-bottom: 1px; }
+.inv-rows { margin: 6px 0 0; border-top: 1px solid var(--line); }
+.inv-row {
+  display: grid; grid-template-columns: minmax(9em, 12em) 1em 1fr;
+  gap: 8px; align-items: baseline;
+  min-height: 22px; padding: 2px 0;
+  border-bottom: 1px solid var(--line); font: 12px var(--sans); color: var(--tx2);
+}
+.inv-row:last-child { border-bottom: none; }
+.inv-row.active { color: var(--tx); }
+.inv-row.pending { opacity: 0.4; }
+.inv-row-name { font: 11px var(--mono); color: var(--tx3); }
+.inv-row.active .inv-row-name { color: var(--tx2); }
+.inv-row-mark { font: 11px var(--mono); color: var(--tx3); }
+.inv-row.active .inv-row-mark { color: var(--acc); }
+.inv-row.complete .inv-row-mark { color: var(--ok); }
+.inv-row.empty .inv-row-mark { color: var(--warn); }
+.inv-row-short { font: 12px var(--mono); color: var(--tx2); min-width: 0; }
+.inv-link {
+  margin-top: 8px; background: none; border: 0; padding: 0;
+  color: var(--acc2); font: 12px var(--sans); cursor: pointer;
+}
+.inv-link:hover { text-decoration: underline; }
+
+@media (max-width: 720px) {
+  .inv-block-blurb { display: none; }
+  .inv-block { min-height: 28px; padding: 4px 6px; }
+  .inv-edge { height: 28px; }
+  .inv-fan-name { max-width: 9em; }
+}
 
 .sbody { flex: 1; min-height: 0; display: flex; }
 /* Shares the panel instead of holding 460px of it. Span names are the longest strings in

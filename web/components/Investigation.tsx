@@ -1,7 +1,13 @@
 'use client';
 
-import { useState } from 'react';
-import { deriveInvestigation, type InvDetail, type InvStage, type StageState } from '@/lib/investigation';
+import { Fragment, useEffect, useMemo, useState } from 'react';
+import {
+  deriveInvestigation,
+  type InvDetail,
+  type InvStage,
+  type StageId,
+  type StageState,
+} from '@/lib/investigation';
 import type { Case, Step } from '@/lib/types';
 
 function mark(state: StageState): string {
@@ -21,59 +27,140 @@ function mark(state: StageState): string {
   }
 }
 
-function DetailRow({
-  row,
-  onOpen,
-}: {
-  row: InvDetail;
-  onOpen: (stepId: string | undefined) => void;
-}) {
-  const [open, setOpen] = useState(false);
+/** Default stage from revealed work: active frontier, else empty, else last settled. */
+function defaultStage(stages: InvStage[]): StageId {
+  const active = stages.find(s => s.state === 'active');
+  if (active) return active.id;
+  const empty = stages.find(s => s.state === 'empty');
+  if (empty) return empty.id;
+  const lastDone = [...stages].reverse().find(s => s.state === 'complete' || s.state === 'empty');
+  return lastDone?.id ?? stages[0]?.id ?? 'detect';
+}
+
+function Fan({ lanes }: { lanes: InvDetail[] }) {
+  if (!lanes.length) return null;
   return (
-    <li className={`inv-lane ${row.state}`}>
-      <button type="button" className="inv-lane-main" onClick={() => onOpen(row.stepId)}>
-        <span className="inv-mark">{mark(row.state)}</span>
-        <span className="inv-lane-name">{row.label}</span>
-        {row.state !== 'pending' && <span className="inv-lane-short">{row.short}</span>}
-      </button>
-      {row.raw ? (
-        <button type="button" className="inv-raw-toggle" onClick={() => setOpen(v => !v)} aria-expanded={open}>
-          {open ? 'Hide recorded result' : 'Recorded result'}
-        </button>
-      ) : null}
-      {open && row.raw ? <p className="inv-raw">{row.raw}</p> : null}
-    </li>
+    <div className="inv-fan" aria-label="Investigate parallel work">
+      <span className="inv-fan-stem" aria-hidden="true" />
+      <div className="inv-fan-branches">
+        {lanes.map((lane, i) => (
+          <div key={lane.id} className={`inv-fan-lane ${lane.state}${i === lanes.length - 1 ? ' last' : ''}`}>
+            <span className="inv-fan-elbow" aria-hidden="true" />
+            <span className="inv-mark" aria-hidden="true">
+              {mark(lane.state)}
+            </span>
+            <span className="inv-fan-name">{lane.label}</span>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
 function StageBlock({
   stage,
-  onOpen,
+  selected,
+  onSelect,
 }: {
   stage: InvStage;
-  onOpen: (tab: 'trace' | 'evidence', stepId?: string) => void;
+  selected: boolean;
+  onSelect: () => void;
 }) {
   return (
-    <section className={`inv-stage ${stage.state}`}>
+    <div className="inv-block-col" role="listitem">
       <button
         type="button"
-        className="inv-head"
-        onClick={() => onOpen(stage.open.tab, stage.open.stepId)}
+        className={`inv-block ${stage.state}${stage.positive ? ' ok' : ''}${selected ? ' on' : ''}`}
+        aria-current={selected ? 'true' : undefined}
+        onClick={onSelect}
       >
-        <span className="inv-mark">{mark(stage.state)}</span>
-        <span className="inv-label">{stage.label}</span>
-        <span className="inv-meaning">— {stage.meaning}</span>
+        <span className="inv-block-top">
+          <span className="inv-mark" aria-hidden="true">
+            {mark(stage.state)}
+          </span>
+          <span className="inv-block-label">{stage.label}</span>
+        </span>
+        <span className="inv-block-blurb">{stage.blurb}</span>
       </button>
-      <p className="inv-q">{stage.question}</p>
-      {stage.support ? <p className="inv-support">{stage.support}</p> : null}
-      {stage.details.length > 0 && (
-        <ul className="inv-fan">
+      {stage.id === 'investigate' ? <Fan lanes={stage.details} /> : null}
+    </div>
+  );
+}
+
+function Spine({
+  stages,
+  selected,
+  onSelect,
+}: {
+  stages: InvStage[];
+  selected: StageId;
+  onSelect: (id: StageId) => void;
+}) {
+  return (
+    <div className="inv-spine">
+      <div className="inv-rail" role="list" aria-label="Investigation stages">
+        {stages.map((stage, i) => (
+          <Fragment key={stage.id}>
+            {i > 0 ? (
+              <span className="inv-edge" aria-hidden="true">
+                →
+              </span>
+            ) : null}
+            <StageBlock
+              stage={stage}
+              selected={selected === stage.id}
+              onSelect={() => onSelect(stage.id)}
+            />
+          </Fragment>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function StageDetail({
+  stage,
+  onDeepLink,
+}: {
+  stage: InvStage;
+  onDeepLink: () => void;
+}) {
+  const supportLines = stage.support?.split('\n').filter(Boolean) ?? [];
+
+  return (
+    <div className={`nd inv-nd ${stage.state}`}>
+      <div className="ndh">
+        <span className="k">{stage.label}</span>
+        <span className="dim2">·</span>
+        <span className="n inv-state">{stage.state}</span>
+      </div>
+
+      <div className="inv-meaning">{stage.meaning}</div>
+
+      {supportLines.map((line, i) => (
+        <div className="inv-support" key={`support-${i}`}>
+          {line}
+        </div>
+      ))}
+
+      {stage.details.length > 0 ? (
+        <div className="inv-rows">
           {stage.details.map(row => (
-            <DetailRow key={row.id} row={row} onOpen={stepId => onOpen('trace', stepId)} />
+            <div key={row.id} className={`inv-row ${row.state}`}>
+              <span className="inv-row-name">{row.label}</span>
+              <span className="inv-row-mark" aria-hidden="true">
+                {mark(row.state)}
+              </span>
+              <span className="inv-row-short">{row.state === 'pending' ? '' : row.short}</span>
+            </div>
           ))}
-        </ul>
-      )}
-    </section>
+        </div>
+      ) : null}
+
+      <button type="button" className="inv-link" onClick={onDeepLink}>
+        {stage.open.tab === 'evidence' ? 'View evidence →' : 'View technical trace →'}
+      </button>
+    </div>
   );
 }
 
@@ -86,15 +173,25 @@ export function Investigation({
   steps: Step[];
   onOpen: (tab: 'trace' | 'evidence', stepId?: string) => void;
 }) {
-  const stages = deriveInvestigation(steps, c);
+  const stages = useMemo(() => deriveInvestigation(steps, c), [steps, c]);
+  const auto = defaultStage(stages);
+
+  const [manual, setManual] = useState<StageId | null>(null);
+
+  useEffect(() => {
+    setManual(null);
+  }, [c.case_id]);
+
+  const selected: StageId = manual ?? auto;
+  const stage = stages.find(s => s.id === selected) ?? stages.find(s => s.id === auto) ?? stages[0];
+  if (!stage) return null;
+
   return (
     <div className="inv">
-      {stages.map((stage, i) => (
-        <div key={stage.id}>
-          {i > 0 && <div className="inv-join" aria-hidden="true" />}
-          <StageBlock stage={stage} onOpen={onOpen} />
-        </div>
-      ))}
+      <Spine stages={stages} selected={stage.id} onSelect={setManual} />
+      <div className="inv-body">
+        <StageDetail stage={stage} onDeepLink={() => onOpen(stage.open.tab, stage.open.stepId)} />
+      </div>
     </div>
   );
 }
